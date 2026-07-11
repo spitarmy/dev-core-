@@ -41,10 +41,14 @@ async function generatePlan(prompt: string, model: string, imageBase64?: string)
     const systemInstruction = isAuto 
       ? `あなたは優秀なAIマネージャーです。以下のユーザーからの指示を読み、実装計画を作成してください。
          【重要】必要に応じて最新のライブラリや公式ドキュメントをGoogle検索でリサーチし、その結果（最新のコード例や注意点）を必ず計画に含めてください。
-         例: 
-         - デザインや高度なコーディングは、Anthropic社のClaude 3.5に依頼します。
-         - 全体の構成レビューと報告まとめは、私（Google Gemini）が担当しコストを削減します。
-         - [リサーチメモ]: Stripeの最新APIでは...
+         【重要】さらに、このタスクを複数の専門家AIに分割して担当させるための「チーム編成表」を、以下のJSON形式で必ず計画の最後に含めてください。
+         \`\`\`json
+         [
+           { "role": "UI Designer", "system": "あなたはUIデザイナーです。見た目のみを実装してください。", "task": "ログイン画面のCSSを紫色に変更する" },
+           { "role": "Backend Engineer", "system": "あなたはバックエンドエンジニアです。DBロジックのみを実装してください。", "task": "Firestoreの認証ロジックを追加する" }
+         ]
+         \`\`\`
+         ※ 簡単なタスクの場合は1人のみで構いません。
          最後に「よろしければ承認をお願いします」と添えてください。`
       : `あなたはシニアエンジニアです。以下の指示に対する具体的な「実装計画」をステップバイステップで作成し、必要に応じて最新情報を検索して計画に含め、最後に「よろしければ承認をお願いします」と添えてください。`;
 
@@ -78,84 +82,109 @@ async function generatePlan(prompt: string, model: string, imageBase64?: string)
 async function executeTask(prompt: string, model: string, imageBase64?: string, plan?: string): Promise<string> {
   try {
     if (model === 'auto-multi-agent') {
-      console.log('🤖 [MULTI-AGENT] Starting Auto-Routing Workflow...');
+      console.log('🤖 [MULTI-AGENT] Starting Auto-Routing Swarm Workflow...');
       
-      // Step 1: Delegate heavy coding to Claude (Anthropic)
-      console.log('🤖 [MULTI-AGENT] Delegating coding task to Claude...');
-      const claudeMsg = await anthropic.messages.create({
-          model: 'claude-3-5-sonnet-20240620',
-          max_tokens: 3000,
-          system: `あなたは自律型コーディングAI（Claude）です。与えられた要件のコードを実装してください。
-以下はマネージャー（Gemini）が検索・作成した実装計画と事前リサーチメモです。これを参考に最新の仕様で実装してください。
-<plan>
-${plan || '計画なし'}
-</plan>
-出力は必ず以下のJSON形式の配列のみを返してください。マークダウンやその他の説明文は一切含めないでください。ルートディレクトリは \`apps/web/\` や \`apps/worker/\` などのパスを指定します。
-[
-  {
-    "file": "apps/web/src/app/page.tsx",
-    "content": "完全なファイルの内容..."
-  }
-]`,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                ...(imageBase64 ? [{
-                  type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: 'image/jpeg',
-                    data: imageBase64
-                  }
-                }] : [])
-              ] as any
-            }
-          ]
-      });
-      const claudeResult = claudeMsg.content[0].type === 'text' ? claudeMsg.content[0].text : '[]';
-
-      let filesUpdated = 0;
-      let pushSuccess = false;
+      // チーム編成表の抽出
+      let swarmPlan: any[] = [];
       try {
-        // Extract JSON array if Claude added markdown blocks
-        const jsonMatch = claudeResult.match(/\[[\s\S]*\]/);
-        const jsonStr = jsonMatch ? jsonMatch[0] : claudeResult;
-        const filesToUpdate = JSON.parse(jsonStr);
+        const jsonMatch = plan?.match(/```json\n([\s\S]*?)\n```/);
+        if (jsonMatch) {
+          swarmPlan = JSON.parse(jsonMatch[1]);
+        } else {
+          swarmPlan = [{ role: "Fullstack Engineer", system: "あなたはフルスタックエンジニアです。要件をすべて実装してください。", task: prompt }];
+        }
+      } catch (e) {
+        swarmPlan = [{ role: "Fullstack Engineer", system: "あなたはフルスタックエンジニアです。要件をすべて実装してください。", task: prompt }];
+      }
+
+      console.log(`🤖 [MULTI-AGENT] Swarm Team formed with ${swarmPlan.length} agents.`);
+      
+      const memoryFiles: Record<string, string> = {};
+      let totalFilesUpdated = 0;
+      let allClaudeResults = "";
+
+      // 各エージェントを順番に呼び出す (Swarm)
+      for (const agent of swarmPlan) {
+        console.log(`🤖 [MULTI-AGENT] Delegating to: ${agent.role}...`);
         
-        for (const item of filesToUpdate) {
-          const fullPath = path.resolve(__dirname, '../../', item.file);
-          fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-          fs.writeFileSync(fullPath, item.content, 'utf8');
-          filesUpdated++;
-          console.log(`🤖 [MULTI-AGENT] Wrote file: ${item.file}`);
+        let previousContext = "";
+        if (Object.keys(memoryFiles).length > 0) {
+          previousContext = "\n\n【前の担当者からの引き継ぎコード】\n前任者が以下のファイルを途中まで実装しました。必ずこのコードをベースにして、あなたの担当作業を追加した完全なファイルを出力してください。\n";
+          for (const [file, content] of Object.entries(memoryFiles)) {
+            previousContext += `--- ${file} ---\n${content}\n\n`;
+          }
         }
 
-        // Git Push if we have a token
-        if (filesUpdated > 0 && process.env.GITHUB_TOKEN) {
-          console.log(`🤖 [MULTI-AGENT] Pushing ${filesUpdated} files to GitHub...`);
+        const claudeMsg = await anthropic.messages.create({
+            model: 'claude-3-5-sonnet-20240620',
+            max_tokens: 3000,
+            system: `${agent.system}\n\n以下はマネージャー（Gemini）からの事前リサーチメモです。\n<plan>\n${plan || '計画なし'}\n</plan>\n\n${previousContext}\n出力は必ず以下のJSON形式の配列のみを返してください。マークダウンやその他の説明文は一切含めないでください。ルートディレクトリは \`apps/web/\` や \`apps/worker/\` などのパスを指定します。\n[\n  {\n    "file": "apps/web/src/app/page.tsx",\n    "content": "完全なファイルの内容..."\n  }\n]`,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: `【あなたの担当タスク】\n${agent.task}\n\n【元の全体の要件】\n${prompt}` },
+                  ...(imageBase64 ? [{
+                    type: 'image',
+                    source: {
+                      type: 'base64',
+                      media_type: 'image/jpeg',
+                      data: imageBase64
+                    }
+                  }] : [])
+                ] as any
+              }
+            ]
+        });
+
+        const claudeResult = claudeMsg.content[0].type === 'text' ? claudeMsg.content[0].text : '[]';
+        allClaudeResults += `\n【${agent.role}の実装内容】\n${claudeResult.substring(0, 1000)}...`;
+
+        try {
+          const jsonMatch = claudeResult.match(/\[[\s\S]*\]/);
+          const jsonStr = jsonMatch ? jsonMatch[0] : claudeResult;
+          const filesToUpdate = JSON.parse(jsonStr);
+          
+          for (const item of filesToUpdate) {
+            memoryFiles[item.file] = item.content; // メモリに保存して次のエージェントへ引き継ぐ
+          }
+        } catch (err) {
+          console.error(`[MULTI-AGENT] JSON Parse error for agent ${agent.role}:`, err);
+        }
+      }
+
+      // 最後に全エージェントの作業結果をファイルに書き出してPush
+      let pushSuccess = false;
+      try {
+        for (const [file, content] of Object.entries(memoryFiles)) {
+          const fullPath = path.resolve(__dirname, '../../', file);
+          fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+          fs.writeFileSync(fullPath, content, 'utf8');
+          totalFilesUpdated++;
+          console.log(`🤖 [MULTI-AGENT] Wrote file: ${file}`);
+        }
+
+        if (totalFilesUpdated > 0 && process.env.GITHUB_TOKEN) {
+          console.log(`🤖 [MULTI-AGENT] Pushing ${totalFilesUpdated} files to GitHub...`);
           execSync(`git config --global user.name "Zennobate AI Worker"`);
           execSync(`git config --global user.email "worker@ai.local"`);
           execSync(`git remote set-url origin https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/spitarmy/dev-core-.git`);
           execSync(`git add .`);
-          execSync(`git commit -m "feat: AI automated implementation for task"`);
+          execSync(`git commit -m "feat: AI Agent Swarm automated implementation"`);
           execSync(`git push origin main`);
           pushSuccess = true;
           console.log(`🤖 [MULTI-AGENT] Successfully pushed to GitHub!`);
-        } else if (filesUpdated > 0) {
-           console.log(`🤖 [MULTI-AGENT] Files updated locally, but GITHUB_TOKEN not found. Skipping push.`);
         }
       } catch (err) {
-        console.error("JSON Parse or Git error:", err);
+        console.error("Git push error:", err);
       }
 
       // Step 2: Manager (Gemini) reviews
       console.log('🤖 [MULTI-AGENT] Manager (Gemini) is reviewing Claude\'s work...');
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: `元の要件: ${prompt}\n\nClaudeの実装内容(JSON): ${claudeResult.substring(0, 2000)}... (省略)\n\n更新されたファイル数: ${filesUpdated}\nGitへの自動Push成功: ${pushSuccess ? 'はい' : 'いいえ'}`,
-        config: { systemInstruction: "あなたはレビュー担当のマネージャーAIです。部下のClaudeがコードを書き換えました。Claudeの実装内容（JSONのfile名やcontentの中身）を読み解き、「どのファイルの、どの部分を、どのように変更したか」をユーザーに分かりやすく解説する完了報告書（マークダウン形式）を作成してください。最後に、自動でGitHubへPushされ、本番環境への自動デプロイが開始されたことも伝えてください。" }
+        contents: `元の要件: ${prompt}\n\nエージェントチームの作業結果: ${allClaudeResults}\n\n更新されたファイル数: ${totalFilesUpdated}\nGitへの自動Push成功: ${pushSuccess ? 'はい' : 'いいえ'}`,
+        config: { systemInstruction: "あなたはレビュー担当のマネージャーAIです。部下のAIチーム（Claude達）が連携してコードを書き換えました。各AIの実装内容を読み解き、「どのファイルがどのように変更されたか」をユーザーに分かりやすく解説する完了報告書（マークダウン形式）を作成してください。最後に、自動でGitHubへPushされ本番環境へのデプロイが開始されたことも伝えてください。" }
       });
       return response.text || '完了';
 
