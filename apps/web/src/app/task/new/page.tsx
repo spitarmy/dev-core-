@@ -2,15 +2,30 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { db } from "@/lib/firebase";
+import { db, storage } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function NewTaskPage() {
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("auto-multi-agent");
+  const [image, setImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setImage(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,10 +35,18 @@ export default function NewTaskPage() {
     setError(null);
     
     try {
+      let imageUrl = null;
+      if (image) {
+        const storageRef = ref(storage, `tasks/${Date.now()}_${image.name}`);
+        await uploadBytes(storageRef, image);
+        imageUrl = await getDownloadURL(storageRef);
+      }
+
       // Firestoreの "tasks" コレクションに新しいタスクを保存
       await addDoc(collection(db, "tasks"), {
         prompt: prompt.trim(),
         model: model,
+        imageUrl: imageUrl,
         status: "QUEUED", // 待機中
         createdAt: serverTimestamp(),
       });
@@ -95,6 +118,53 @@ export default function NewTaskPage() {
                 <option value="claude-fable-5">Claude Fable 5 (超高速・高品質コーディング)</option>
                 <option value="gpt-5.6-sol">GPT-5.6 Sol (複雑な設計と自律エージェント)</option>
               </select>
+            </div>
+
+            {/* Image Upload UI */}
+            <div style={{ marginBottom: '2rem' }}>
+              <label 
+                htmlFor="image" 
+                style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}
+              >
+                参考画像（手書きのメモやスクリーンショット）
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <label 
+                  htmlFor="image" 
+                  className="btn btn-outline"
+                  style={{ cursor: 'pointer', padding: '0.5rem 1rem' }}
+                >
+                  📷 画像を選択
+                </label>
+                <input
+                  type="file"
+                  id="image"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                  style={{ display: 'none' }}
+                />
+                {image && <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>{image.name}</span>}
+              </div>
+              {imagePreview && (
+                <div style={{ marginTop: '1rem', position: 'relative', display: 'inline-block' }}>
+                  <img 
+                    src={imagePreview} 
+                    alt="Preview" 
+                    style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }} 
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => { setImage(null); setImagePreview(null); }}
+                    style={{
+                      position: 'absolute', top: '-10px', right: '-10px',
+                      background: 'var(--danger)', color: 'white', border: 'none',
+                      borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer'
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
             </div>
             
             {error && (

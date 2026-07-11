@@ -35,7 +35,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-async function generatePlan(prompt: string, model: string): Promise<string> {
+async function generatePlan(prompt: string, model: string, imageBase64?: string): Promise<string> {
   try {
     const isAuto = model === 'auto-multi-agent';
     const systemInstruction = isAuto 
@@ -46,10 +46,20 @@ async function generatePlan(prompt: string, model: string): Promise<string> {
          最後に「よろしければ承認をお願いします」と添えてください。`
       : `あなたはシニアエンジニアです。以下の指示に対する具体的な「実装計画」をステップバイステップで作成し、最後に「よろしければ承認をお願いします」と添えてください。`;
 
+    const contents: any[] = [{ text: prompt }];
+    if (imageBase64) {
+      contents.push({
+        inlineData: {
+          data: imageBase64,
+          mimeType: "image/jpeg"
+        }
+      });
+    }
+
     // 💡 マネージャー役は常に Google Gemini (無料枠/爆速モデル) を使用してコストを削減！
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: prompt,
+      contents: contents,
       config: { systemInstruction }
     });
 
@@ -60,7 +70,7 @@ async function generatePlan(prompt: string, model: string): Promise<string> {
   }
 }
 
-async function executeTask(prompt: string, model: string): Promise<string> {
+async function executeTask(prompt: string, model: string, imageBase64?: string): Promise<string> {
   try {
     if (model === 'auto-multi-agent') {
       console.log('🤖 [MULTI-AGENT] Starting Auto-Routing Workflow...');
@@ -78,7 +88,22 @@ async function executeTask(prompt: string, model: string): Promise<string> {
     "content": "完全なファイルの内容..."
   }
 ]`,
-          messages: [{ role: 'user', content: prompt }]
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt },
+                ...(imageBase64 ? [{
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: 'image/jpeg',
+                    data: imageBase64
+                  }
+                }] : [])
+              ] as any
+            }
+          ]
       });
       const claudeResult = claudeMsg.content[0].type === 'text' ? claudeMsg.content[0].text : '[]';
 
@@ -130,7 +155,22 @@ async function executeTask(prompt: string, model: string): Promise<string> {
           model: 'claude-3-5-sonnet-20240620',
           max_tokens: 1000,
           system: "あなたはシニアエンジニアです。以下の指示に対する作業が完了したという体裁で、「作業結果の報告書」を作成してください。",
-          messages: [{ role: 'user', content: prompt }]
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt },
+                ...(imageBase64 ? [{
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: 'image/jpeg',
+                    data: imageBase64
+                  }
+                }] : [])
+              ] as any
+            }
+          ]
       });
       return msg.content[0].type === 'text' ? msg.content[0].text : '完了';
 
@@ -140,7 +180,15 @@ async function executeTask(prompt: string, model: string): Promise<string> {
         model: "gpt-4o",
         messages: [
           { role: "system", content: "あなたはシニアエンジニアです。以下の指示に対する作業が完了したという体裁で、「作業結果の報告書」を作成してください。" },
-          { role: "user", content: prompt }
+          { 
+            role: "user", 
+            content: imageBase64 
+              ? [
+                  { type: "text", text: prompt },
+                  { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+                ] 
+              : prompt 
+          }
         ]
       });
       return response.choices[0].message.content || '実装が完了しました。';
@@ -173,7 +221,20 @@ async function startWorker() {
               updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
 
-            const plan = await generatePlan(taskData.prompt, taskData.model);
+            let imageBase64: string | undefined;
+            if (taskData.imageUrl) {
+              try {
+                console.log(`[🔍 VISION] Fetching image from URL...`);
+                const res = await fetch(taskData.imageUrl);
+                const buf = await res.arrayBuffer();
+                imageBase64 = Buffer.from(buf).toString('base64');
+                console.log(`[🔍 VISION] Successfully converted image to Base64.`);
+              } catch (err) {
+                console.error("[🔍 VISION] Failed to fetch image:", err);
+              }
+            }
+
+            const plan = await generatePlan(taskData.prompt, taskData.model, imageBase64);
 
             await change.doc.ref.update({
               status: 'WAITING_APPROVAL',
@@ -194,7 +255,18 @@ async function startWorker() {
               updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
 
-            const result = await executeTask(taskData.prompt, taskData.model);
+            let imageBase64: string | undefined;
+            if (taskData.imageUrl) {
+              try {
+                const res = await fetch(taskData.imageUrl);
+                const buf = await res.arrayBuffer();
+                imageBase64 = Buffer.from(buf).toString('base64');
+              } catch (err) {
+                console.error(err);
+              }
+            }
+
+            const result = await executeTask(taskData.prompt, taskData.model, imageBase64);
 
             await change.doc.ref.update({
               status: 'COMPLETED',
