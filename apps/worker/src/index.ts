@@ -35,11 +35,14 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-async function generatePlan(prompt: string, model: string, imageBase64?: string): Promise<string> {
+async function generatePlan(prompt: string, model: string, imageBase64?: string, memoryText?: string): Promise<string> {
   try {
     const isAuto = model === 'auto-multi-agent';
     const systemInstruction = isAuto 
       ? `あなたは優秀なAIマネージャーです。以下のユーザーからの指示を読み、実装計画を作成してください。
+         【現在のプロジェクトの設計指針とあなたの記憶】
+         ${memoryText || 'まだ記憶はありません。'}
+         
          【重要】必要に応じて最新のライブラリや公式ドキュメントをGoogle検索でリサーチし、その結果（最新のコード例や注意点）を必ず計画に含めてください。
          【重要】さらに、このタスクを複数の専門家AIに分割して担当させるための「チーム編成表」を、以下のJSON形式で必ず計画の最後に含めてください。
          \`\`\`json
@@ -79,7 +82,7 @@ async function generatePlan(prompt: string, model: string, imageBase64?: string)
   }
 }
 
-async function executeTask(prompt: string, model: string, imageBase64?: string, plan?: string): Promise<string> {
+async function executeTask(prompt: string, model: string, imageBase64?: string, plan?: string, memoryText?: string): Promise<string> {
   try {
     if (model === 'auto-multi-agent') {
       console.log('🤖 [MULTI-AGENT] Starting Auto-Routing Swarm Workflow...');
@@ -118,7 +121,7 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
         const claudeMsg = await anthropic.messages.create({
             model: 'claude-3-5-sonnet-20240620',
             max_tokens: 3000,
-            system: `${agent.system}\n\n以下はマネージャー（Gemini）からの事前リサーチメモです。\n<plan>\n${plan || '計画なし'}\n</plan>\n\n${previousContext}\n出力は必ず以下のJSON形式の配列のみを返してください。マークダウンやその他の説明文は一切含めないでください。ルートディレクトリは \`apps/web/\` や \`apps/worker/\` などのパスを指定します。\n[\n  {\n    "file": "apps/web/src/app/page.tsx",\n    "content": "完全なファイルの内容..."\n  }\n]`,
+            system: `${agent.system}\n\n【現在のプロジェクトの設計指針とあなたの記憶】\n${memoryText || 'まだ記憶はありません。'}\n\n以下はマネージャー（Gemini）からの事前リサーチメモです。\n<plan>\n${plan || '計画なし'}\n</plan>\n\n${previousContext}\n出力は必ず以下のJSON形式の配列のみを返してください。マークダウンやその他の説明文は一切含めないでください。ルートディレクトリは \`apps/web/\` や \`apps/worker/\` などのパスを指定します。\n[\n  {\n    "file": "apps/web/src/app/page.tsx",\n    "content": "完全なファイルの内容..."\n  }\n]`,
             messages: [
               {
                 role: 'user',
@@ -186,6 +189,22 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
         contents: `元の要件: ${prompt}\n\nエージェントチームの作業結果: ${allClaudeResults}\n\n更新されたファイル数: ${totalFilesUpdated}\nGitへの自動Push成功: ${pushSuccess ? 'はい' : 'いいえ'}`,
         config: { systemInstruction: "あなたはレビュー担当のマネージャーAIです。部下のAIチーム（Claude達）が連携してコードを書き換えました。各AIの実装内容を読み解き、「どのファイルがどのように変更されたか」をユーザーに分かりやすく解説する完了報告書（マークダウン形式）を作成してください。最後に、自動でGitHubへPushされ本番環境へのデプロイが開始されたことも伝えてください。" }
       });
+      
+      // Step 3: Update Memory
+      console.log('🤖 [MULTI-AGENT] Updating Project Memory...');
+      try {
+        const memoryUpdateRes = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: `現在の記憶:\n${memoryText || 'なし'}\n\n今回のユーザーの依頼:\n${prompt}\n\n今回の実装内容:\n${allClaudeResults}`,
+          config: { systemInstruction: "あなたはAIの記憶を管理するアシスタントです。今回のユーザーの依頼と実装内容から、今後もプロジェクト全体で適用すべき『デザインの好み（例：角丸にする、特定の色を使う）』や『コーディングルール（例：特定のライブラリを使う）』があれば、現在の記憶に追記・修正して、新しい記憶の全文を出力してください。マークダウンなどの装飾は不要です。重要なルールのみを箇条書きで残してください。" }
+        });
+        const newMemory = memoryUpdateRes.text || memoryText || '';
+        await db.collection('projectInfo').doc('memory').set({ content: newMemory, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        console.log('🤖 [MULTI-AGENT] Memory updated successfully.');
+      } catch(e) {
+        console.error("Failed to update memory", e);
+      }
+
       return response.text || '完了';
 
     } else if (model === 'claude-fable-5') {
@@ -253,6 +272,16 @@ async function startWorker() {
           if (taskData.status === 'QUEUED') {
             console.log(`\n[📥 NEW TASK] Detected QUEUED task: T-${taskId.substring(0, 4).toUpperCase()}`);
             
+            let memoryText = "";
+            try {
+              const memDoc = await db.collection('projectInfo').doc('memory').get();
+              if (memDoc.exists) {
+                memoryText = memDoc.data()?.content || "";
+              }
+            } catch (e) {
+              console.error("Failed to read memory", e);
+            }
+
             await change.doc.ref.update({
               status: 'ANALYZING',
               summary: 'Google Gemini（無料枠）が要件を分析し、最適なタスク分割と実装計画を作成しています...',
@@ -272,7 +301,7 @@ async function startWorker() {
               }
             }
 
-            const plan = await generatePlan(taskData.prompt, taskData.model, imageBase64);
+            const plan = await generatePlan(taskData.prompt, taskData.model, imageBase64, memoryText);
 
             await change.doc.ref.update({
               status: 'WAITING_APPROVAL',
@@ -285,6 +314,16 @@ async function startWorker() {
           if (taskData.status === 'APPROVED') {
             console.log(`\n[✅ APPROVED] Task T-${taskId.substring(0, 4).toUpperCase()} was approved.`);
             
+            let memoryText = "";
+            try {
+              const memDoc = await db.collection('projectInfo').doc('memory').get();
+              if (memDoc.exists) {
+                memoryText = memDoc.data()?.content || "";
+              }
+            } catch (e) {
+              console.error("Failed to read memory", e);
+            }
+
             await change.doc.ref.update({
               status: 'IMPLEMENTING',
               summary: taskData.model === 'auto-multi-agent' 
@@ -306,7 +345,7 @@ async function startWorker() {
 
             // 以前の計画（リサーチ結果）を取得してClaudeに渡す
             const planText = taskData.summary || '';
-            const result = await executeTask(taskData.prompt, taskData.model, imageBase64, planText);
+            const result = await executeTask(taskData.prompt, taskData.model, imageBase64, planText, memoryText);
 
             await change.doc.ref.update({
               status: 'COMPLETED',
