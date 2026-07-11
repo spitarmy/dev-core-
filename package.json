@@ -1,0 +1,27 @@
+{
+  "name": "zennobate-dev-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZENNOBATE DEV CORE — 個人専用AI開発支援システム",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:unit": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf packages/*/dist apps/*/dist apps/*/.next node_modules/.cache",
+    "worker:start": "npm run start --workspace=apps/worker",
+    "worker:stop": "npm run stop --workspace=apps/worker",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:api": "npm run dev --workspace=apps/api"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "UNLICENSED"
+}

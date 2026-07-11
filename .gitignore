@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# Testing
+coverage/
+.vitest/
+
+# Worker runtime
+apps/worker/runtime/
+apps/worker/*.pid
+
+# Secrets - NEVER commit these
+*.pem
+*.key
+service-account*.json
+credentials*.json
+
+# Project memory (per-project, not committed to this repo)
+.devcore/
+
+# OS
+Thumbs.db

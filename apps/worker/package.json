@@ -1,0 +1,21 @@
+{
+  "name": "@devcore/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "stop": "node scripts/stop.js",
+    "health": "node scripts/health-check.js",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@devcore/shared": "*",
+    "@devcore/providers": "*",
+    "@devcore/task-engine": "*",
+    "@devcore/security": "*",
+    "@devcore/antigravity-bridge": "*"
+  }
+}
