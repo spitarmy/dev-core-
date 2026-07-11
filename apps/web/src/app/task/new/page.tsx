@@ -12,8 +12,44 @@ export default function NewTaskPage() {
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  const startListening = () => {
+    if (typeof window === 'undefined') return;
+    
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("お使いのブラウザは音声入力に対応していません。（SafariやChromeをご利用ください）");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'ja-JP';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setPrompt((prev) => prev + (prev ? "\n" : "") + transcript);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error", event.error);
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.start();
+  };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -77,12 +113,22 @@ export default function NewTaskPage() {
         <div className="glass-panel" style={{ padding: '2rem' }}>
           <form onSubmit={handleSubmit}>
             <div style={{ marginBottom: '1.5rem' }}>
-              <label 
-                htmlFor="prompt" 
-                style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}
-              >
-                AIにどんな開発や修正を依頼しますか？
-              </label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <label 
+                  htmlFor="prompt" 
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  AIにどんな開発や修正を依頼しますか？
+                </label>
+                <button
+                  type="button"
+                  onClick={startListening}
+                  className={`btn ${isListening ? 'btn-danger' : 'btn-outline'}`}
+                  style={{ padding: '0.25rem 0.75rem', fontSize: '0.9rem', borderRadius: '20px' }}
+                >
+                  {isListening ? '🔴 録音中...' : '🎤 音声で入力'}
+                </button>
+              </div>
               <textarea
                 id="prompt"
                 className="input-glass"
