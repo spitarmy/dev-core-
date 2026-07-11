@@ -12,6 +12,7 @@ export default function NewTaskPage() {
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitProgress, setSubmitProgress] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
@@ -69,15 +70,19 @@ export default function NewTaskPage() {
     
     setIsSubmitting(true);
     setError(null);
+    setSubmitProgress("処理を開始しています...");
     
     try {
       let imageUrl = null;
       if (image) {
+        setSubmitProgress("画像を圧縮・アップロード中...");
         const storageRef = ref(storage, `tasks/${Date.now()}_${image.name}`);
         await uploadBytes(storageRef, image);
+        setSubmitProgress("画像URLを取得中...");
         imageUrl = await getDownloadURL(storageRef);
       }
 
+      setSubmitProgress("タスクをデータベースに保存中...");
       // Firestoreの "tasks" コレクションに新しいタスクを保存
       await addDoc(collection(db, "tasks"), {
         prompt: prompt.trim(),
@@ -87,11 +92,13 @@ export default function NewTaskPage() {
         createdAt: serverTimestamp(),
       });
       
+      setSubmitProgress("送信完了！ホーム画面に戻ります...");
       router.push("/");
     } catch (err: any) {
       console.error("Task creation failed:", err);
       setError("タスクの送信に失敗しました。もう一度お試しください。");
       setIsSubmitting(false);
+      setSubmitProgress(null);
     }
   };
 
@@ -223,13 +230,20 @@ export default function NewTaskPage() {
               <span className="text-muted" style={{ fontSize: '0.875rem' }}>
                 <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>Cmd + Enter</kbd> でも送信できます
               </span>
-              <button 
-                type="submit" 
-                className="btn btn-primary"
-                disabled={!prompt.trim() || isSubmitting}
-              >
-                {isSubmitting ? "送信中..." : "指示を送信"}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                {submitProgress && (
+                  <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', fontStyle: 'italic', opacity: 0.8 }}>
+                    {submitProgress}
+                  </span>
+                )}
+                <button 
+                  type="submit" 
+                  className="btn btn-primary"
+                  disabled={!prompt.trim() || isSubmitting}
+                >
+                  {isSubmitting ? "送信中..." : "指示を送信"}
+                </button>
+              </div>
             </div>
           </form>
         </div>
