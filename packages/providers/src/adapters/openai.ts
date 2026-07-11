@@ -4,7 +4,7 @@
  */
 
 import { AIProvider, MAX_RETRY_COUNT } from '@devcore/shared';
-import type { AIProviderAdapter, ChatRequest, ChatResponse, ChatMessage } from '../types.js';
+import type { AIProviderAdapter, ChatRequest, ChatResponse } from '../types.js';
 
 /**
  * Configuration options for the {@link OpenAIAdapter}.

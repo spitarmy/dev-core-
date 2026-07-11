@@ -218,7 +218,7 @@ export class GitOperations {
     // `gh pr create` typically outputs the PR URL as the last line
     const url = output.trim();
     const numberMatch = url.match(/\/pull\/(\d+)$/);
-    const prNumber = numberMatch ? parseInt(numberMatch[1], 10) : 0;
+    const prNumber = numberMatch?.[1] ? parseInt(numberMatch[1], 10) : 0;
 
     return {
       url,

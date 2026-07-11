@@ -48,7 +48,6 @@ export interface SkillInfo {
  * frontmatter (`name`, `description`) and a Markdown body of instructions.
  */
 export class SkillRunner {
-  private readonly workspaceRoot: string;
   private readonly skillsBasePath: string;
 
   /**
@@ -56,7 +55,6 @@ export class SkillRunner {
    * @param workspaceRoot - Absolute path to the workspace root directory.
    */
   constructor(workspaceRoot: string) {
-    this.workspaceRoot = workspaceRoot;
     this.skillsBasePath = join(workspaceRoot, '.agents', 'skills');
   }
 

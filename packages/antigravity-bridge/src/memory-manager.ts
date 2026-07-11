@@ -11,7 +11,6 @@ import { DEVCORE_DIR } from '@devcore/shared';
  * tech stack information, and decision history.
  */
 export class MemoryManager {
-  private readonly workspaceRoot: string;
   private readonly devCoreDir: string;
 
   /**
@@ -19,7 +18,6 @@ export class MemoryManager {
    * @param workspaceRoot - Absolute path to the workspace root directory.
    */
   constructor(workspaceRoot: string) {
-    this.workspaceRoot = workspaceRoot;
     this.devCoreDir = join(workspaceRoot, DEVCORE_DIR);
   }
 
@@ -85,7 +83,7 @@ export class MemoryManager {
     const updated: ProjectMemory = {
       ...current,
       ...update,
-      lastUpdated: new Date().toISOString(),
+      lastUpdated: new Date(),
     };
 
     await this.ensureDevCoreDir();
@@ -119,7 +117,7 @@ export class MemoryManager {
       description,
       decidedBy,
       rationale,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date(),
     };
 
     const memory = await this.loadMemory();
@@ -203,14 +201,13 @@ export class MemoryManager {
    * Returns a default, empty {@link ProjectMemory} structure.
    */
   private getDefaultMemory(): ProjectMemory {
-    const now = new Date().toISOString();
     return {
+      projectId: '',
       conventions: [],
       architecture: '',
       techStack: [],
       recentDecisions: [],
-      lastUpdated: now,
-      createdAt: now,
+      lastUpdated: new Date(),
     };
   }
 }

@@ -93,11 +93,12 @@ export class ModelRouter {
    * mapping is provided in the constructor config.
    */
   private readonly defaultRoleMapping: Record<ModelRole, AIProvider> = {
+    [ModelRole.PLANNER]: AIProvider.OPENAI,
     [ModelRole.ARCHITECT]: AIProvider.ANTHROPIC,
-    [ModelRole.CODE]: AIProvider.ANTHROPIC,
-    [ModelRole.REVIEW]: AIProvider.OPENAI,
-    [ModelRole.DEBUG]: AIProvider.GOOGLE,
-    [ModelRole.GENERAL]: AIProvider.OPENAI,
+    [ModelRole.IMPLEMENTER]: AIProvider.ANTHROPIC,
+    [ModelRole.REVIEWER]: AIProvider.OPENAI,
+    [ModelRole.TESTER]: AIProvider.GOOGLE,
+    [ModelRole.FAST]: AIProvider.OPENAI,
   };
 
   /**
@@ -191,7 +192,7 @@ export class ModelRouter {
     request: ChatRequest,
     fallbackRoles?: ModelRole[],
   ): Promise<ChatResponse> {
-    const rolesToTry = [role, ...(fallbackRoles ?? [ModelRole.GENERAL])];
+    const rolesToTry = [role, ...(fallbackRoles ?? [ModelRole.FAST])];
     const errors: Error[] = [];
 
     for (const currentRole of rolesToTry) {
@@ -261,6 +262,7 @@ export class ModelRouter {
       modelId,
       inputTokens: response.usage.inputTokens,
       outputTokens: response.usage.outputTokens,
+      cost: 0, // Will be calculated in getCostSummary
       timestamp: new Date(),
     });
   }
@@ -292,19 +294,25 @@ export class ModelRouter {
   private mapTaskTypeToRole(taskType: string): ModelRole {
     const normalised = taskType.toLowerCase().trim();
 
-    if (['architecture', 'planning', 'design'].some((k) => normalised.includes(k))) {
+    if (['planning', 'requirements', 'spec'].some((k) => normalised.includes(k))) {
+      return ModelRole.PLANNER;
+    }
+    if (['architecture', 'design', 'system'].some((k) => normalised.includes(k))) {
       return ModelRole.ARCHITECT;
     }
-    if (['code', 'implement', 'develop'].some((k) => normalised.includes(k))) {
-      return ModelRole.CODE;
+    if (['code', 'implement', 'develop', 'build'].some((k) => normalised.includes(k))) {
+      return ModelRole.IMPLEMENTER;
     }
     if (['review', 'audit', 'check'].some((k) => normalised.includes(k))) {
-      return ModelRole.REVIEW;
+      return ModelRole.REVIEWER;
+    }
+    if (['test', 'qa', 'verify'].some((k) => normalised.includes(k))) {
+      return ModelRole.TESTER;
     }
     if (['debug', 'fix', 'troubleshoot'].some((k) => normalised.includes(k))) {
-      return ModelRole.DEBUG;
+      return ModelRole.IMPLEMENTER;
     }
 
-    return ModelRole.GENERAL;
+    return ModelRole.FAST;
   }
 }

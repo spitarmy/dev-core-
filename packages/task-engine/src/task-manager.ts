@@ -169,7 +169,7 @@ export class TaskManager {
       type,
       title,
       description,
-      details,
+      details: details ?? {},
       createdAt: new Date(),
     };
 

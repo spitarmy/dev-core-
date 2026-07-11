@@ -174,14 +174,8 @@ export class CommandGuard {
     const trimmed = command.trim().toLowerCase();
 
     for (const pattern of DangerousOperations) {
-      if (typeof pattern === 'string') {
-        if (trimmed.includes(pattern.toLowerCase())) {
-          return true;
-        }
-      } else if (pattern instanceof RegExp) {
-        if (pattern.test(trimmed)) {
-          return true;
-        }
+      if (trimmed.includes(pattern.toLowerCase())) {
+        return true;
       }
     }
 
