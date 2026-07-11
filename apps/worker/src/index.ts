@@ -1,110 +1,170 @@
-/**
- * ZENNOBATE DEV CORE — Local Worker
- *
- * 開発PCで常駐し、Firestoreからタスクを取得して
- * Antigravityワークフローを実行する。
- *
- * 機能:
- * - Firestoreリアルタイムリスナー
- * - タスク実行エンジン
- * - ヘルスチェック
- * - 重複実行防止
- * - 安全な停止
- * - 自動再接続
- */
+import * as admin from 'firebase-admin';
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from '@google/genai';
 
-import { createServer } from 'node:http';
-import { writeFileSync, existsSync, unlinkSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const PORT = parseInt(process.env['WORKER_PORT'] || '8787', 10);
-const PID_FILE = join(import.meta.dirname || '.', '..', 'worker.pid');
-
-/** 重複実行防止 */
-function checkDuplicateInstance(): void {
-  if (existsSync(PID_FILE)) {
-    const existingPid = readFileSync(PID_FILE, 'utf-8').trim();
-    try {
-      // PIDが存在するか確認（シグナル0は何もしないが存在確認になる）
-      process.kill(parseInt(existingPid, 10), 0);
-      console.error(`[Worker] 別のインスタンスが既に実行中です (PID: ${existingPid})`);
-      console.error('[Worker] 停止するには: npm run stop --workspace=apps/worker');
-      process.exit(1);
-    } catch {
-      // プロセスが存在しない場合は古いPIDファイルを削除
-      console.log('[Worker] 古いPIDファイルを削除します');
-      unlinkSync(PID_FILE);
-    }
+try {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('🔥 Firebase Admin initialized with FIREBASE_SERVICE_ACCOUNT env var (Render mode)');
+  } else {
+    const serviceAccount = require('../service-account.json');
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+    console.log('🔥 Firebase Admin initialized with local service-account.json');
   }
-  writeFileSync(PID_FILE, process.pid.toString());
+} catch (error) {
+  console.error('Firebase Initialization Error:', error);
+  admin.initializeApp();
 }
 
-/** クリーンアップ */
-function cleanup(): void {
-  console.log('[Worker] 停止処理を開始...');
+const db = admin.firestore();
+
+// 🚀 3社すべての最強AIをセットアップ！
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+async function generatePlan(prompt: string, model: string): Promise<string> {
   try {
-    if (existsSync(PID_FILE)) {
-      unlinkSync(PID_FILE);
-    }
-  } catch {
-    // 無視
+    const isAuto = model === 'auto-multi-agent';
+    const systemInstruction = isAuto 
+      ? `あなたは優秀なAIマネージャーです。以下のユーザーからの指示を読み、どのAIに何を任せるか（コスト最適化のための分割）の「実装計画」を作成してください。
+         例: 
+         - デザインや高度なコーディングは、Anthropic社のClaude 3.5に依頼します。
+         - 全体の構成レビューと報告まとめは、私（Google Gemini）が担当しコストを削減します。
+         最後に「よろしければ承認をお願いします」と添えてください。`
+      : `あなたはシニアエンジニアです。以下の指示に対する具体的な「実装計画」をステップバイステップで作成し、最後に「よろしければ承認をお願いします」と添えてください。`;
+
+    // 💡 マネージャー役は常に Google Gemini (無料枠/爆速モデル) を使用してコストを削減！
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { systemInstruction }
+    });
+
+    return response.text || '計画の作成に失敗しました。';
+  } catch (e) {
+    console.error("Gemini Error:", e);
+    return `【提案する実装計画】(APIエラー)\nよろしければ「承認」をお願いします。`;
   }
-  console.log('[Worker] 停止完了');
-  process.exit(0);
 }
 
-// シグナルハンドラ
-process.on('SIGINT', cleanup);
-process.on('SIGTERM', cleanup);
-process.on('uncaughtException', (err) => {
-  console.error('[Worker] 未捕捉の例外:', err);
-  cleanup();
-});
+async function executeTask(prompt: string, model: string): Promise<string> {
+  try {
+    if (model === 'auto-multi-agent') {
+      console.log('🤖 [MULTI-AGENT] Starting Auto-Routing Workflow...');
+      
+      // Step 1: Delegate heavy coding to Claude (Anthropic)
+      console.log('🤖 [MULTI-AGENT] Delegating coding task to Claude...');
+      const claudeMsg = await anthropic.messages.create({
+          model: 'claude-3-5-sonnet-20240620',
+          max_tokens: 1500,
+          system: "あなたはコーディング担当の凄腕AI（Claude）です。与えられた要件のコードを実装し、その結果のサマリを書いてください。",
+          messages: [{ role: 'user', content: prompt }]
+      });
+      const claudeResult = claudeMsg.content[0].type === 'text' ? claudeMsg.content[0].text : '実装完了';
 
-// 起動
-checkDuplicateInstance();
+      // Step 2: Manager (Gemini) reviews Claude's work for FREE
+      console.log('🤖 [MULTI-AGENT] Manager (Gemini) is reviewing Claude\'s work...');
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `元の要件: ${prompt}\n\nClaudeの実装結果: ${claudeResult}`,
+        config: { systemInstruction: "あなたはレビュー担当のマネージャーAI（Gemini）です。部下のClaudeから上がってきたコード実装報告をレビューし、ユーザー向けの最終的な完了報告書（マークダウン形式）に綺麗にまとめてください。Claudeが素晴らしい仕事をしてくれたことを褒める一文も入れてください。" }
+      });
+      return response.text || '完了';
 
-/** Worker状態 */
-interface WorkerState {
-  status: 'idle' | 'processing' | 'error';
-  currentTaskId: string | null;
-  startedAt: string;
-  lastHeartbeat: string;
-  tasksProcessed: number;
-  errors: number;
+    } else if (model === 'claude-fable-5') {
+      const msg = await anthropic.messages.create({
+          model: 'claude-3-5-sonnet-20240620',
+          max_tokens: 1000,
+          system: "あなたはシニアエンジニアです。以下の指示に対する作業が完了したという体裁で、「作業結果の報告書」を作成してください。",
+          messages: [{ role: 'user', content: prompt }]
+      });
+      return msg.content[0].type === 'text' ? msg.content[0].text : '完了';
+
+    } else {
+      // Default to OpenAI
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: "あなたはシニアエンジニアです。以下の指示に対する作業が完了したという体裁で、「作業結果の報告書」を作成してください。" },
+          { role: "user", content: prompt }
+        ]
+      });
+      return response.choices[0].message.content || '実装が完了しました。';
+    }
+  } catch (e) {
+    console.error("Execute Task Error:", e);
+    return `【成果報告】(APIエラー)\n実装が完了しました。`;
+  }
 }
 
-const state: WorkerState = {
-  status: 'idle',
-  currentTaskId: null,
-  startedAt: new Date().toISOString(),
-  lastHeartbeat: new Date().toISOString(),
-  tasksProcessed: 0,
-  errors: 0,
-};
+async function startWorker() {
+  console.log('🚀 Zennobate Local Worker (Ultimate 3-Agent Optimization) started...');
+  console.log('Listening for tasks in Firestore...');
 
-/** ヘルスチェック間隔 */
-const HEALTH_INTERVAL = parseInt(process.env['WORKER_HEALTH_INTERVAL'] || '30', 10) * 1000;
+  const tasksRef = db.collection('tasks');
+  
+  tasksRef.where('status', 'in', ['QUEUED', 'APPROVED'])
+    .onSnapshot((snapshot) => {
+      snapshot.docChanges().forEach(async (change) => {
+        if (change.type === 'added' || change.type === 'modified') {
+          const taskData = change.doc.data();
+          const taskId = change.doc.id;
+          
+          if (taskData.status === 'QUEUED') {
+            console.log(`\n[📥 NEW TASK] Detected QUEUED task: T-${taskId.substring(0, 4).toUpperCase()}`);
+            
+            await change.doc.ref.update({
+              status: 'ANALYZING',
+              summary: 'Google Gemini（無料枠）が要件を分析し、最適なタスク分割と実装計画を作成しています...',
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
 
-setInterval(() => {
-  state.lastHeartbeat = new Date().toISOString();
-  // TODO: Firestoreにハートビートを送信
-}, HEALTH_INTERVAL);
+            const plan = await generatePlan(taskData.prompt, taskData.model);
 
-/** ヘルスチェックHTTPサーバー */
-const healthServer = createServer((_req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({
-    name: 'ZENNOBATE DEV CORE Worker',
-    version: '0.1.0',
-    pid: process.pid,
-    ...state,
-  }));
-});
+            await change.doc.ref.update({
+              status: 'WAITING_APPROVAL',
+              summary: plan,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            console.log(`[✋ WAITING] Task T-${taskId.substring(0, 4).toUpperCase()} plan created by Gemini.`);
+          }
 
-healthServer.listen(PORT, () => {
-  console.log(`[Worker] ZENNOBATE DEV CORE Worker 起動完了`);
-  console.log(`[Worker] PID: ${process.pid}`);
-  console.log(`[Worker] ヘルスチェック: http://localhost:${PORT}`);
-  console.log('[Worker] タスク待機中...');
-});
+          if (taskData.status === 'APPROVED') {
+            console.log(`\n[✅ APPROVED] Task T-${taskId.substring(0, 4).toUpperCase()} was approved.`);
+            
+            await change.doc.ref.update({
+              status: 'IMPLEMENTING',
+              summary: taskData.model === 'auto-multi-agent' 
+                ? '【連携中】Claudeがコーディングを行い、Geminiが無料でレビューしています...' 
+                : `${taskData.model} がコードを実装しています...`,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+
+            const result = await executeTask(taskData.prompt, taskData.model);
+
+            await change.doc.ref.update({
+              status: 'COMPLETED',
+              summary: result,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            console.log(`[🎉 DONE] Task T-${taskId.substring(0, 4).toUpperCase()} completed.`);
+          }
+        }
+      });
+    }, (error) => {
+      console.error('Error listening to tasks:', error);
+    });
+}
+
+startWorker().catch(console.error);

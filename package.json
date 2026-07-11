@@ -26,6 +26,8 @@
   "license": "UNLICENSED",
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "typescript": "^7.0.2"
+    "firebase-tools": "^15.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }

@@ -1,21 +1,24 @@
 {
   "name": "@devcore/worker",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
+  "version": "1.0.0",
+  "description": "Zennobate Dev Core Local Worker",
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "stop": "node scripts/stop.js",
-    "health": "node scripts/health-check.js",
-    "lint": "eslint src/"
+    "dev": "ts-node-dev --respawn src/index.ts"
   },
   "dependencies": {
-    "@devcore/shared": "*",
-    "@devcore/providers": "*",
-    "@devcore/task-engine": "*",
-    "@devcore/security": "*",
-    "@devcore/antigravity-bridge": "*"
+    "@anthropic-ai/sdk": "^0.111.0",
+    "@google/genai": "^2.11.0",
+    "dotenv": "^16.4.5",
+    "firebase-admin": "^12.0.0",
+    "openai": "^6.46.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.3"
   }
 }
