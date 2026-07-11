@@ -1,6 +1,8 @@
 import * as admin from 'firebase-admin';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import * as fs from 'fs';
+import { execSync } from 'child_process';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
@@ -67,18 +69,59 @@ async function executeTask(prompt: string, model: string): Promise<string> {
       console.log('🤖 [MULTI-AGENT] Delegating coding task to Claude...');
       const claudeMsg = await anthropic.messages.create({
           model: 'claude-3-5-sonnet-20240620',
-          max_tokens: 1500,
-          system: "あなたはコーディング担当の凄腕AI（Claude）です。与えられた要件のコードを実装し、その結果のサマリを書いてください。",
+          max_tokens: 3000,
+          system: `あなたは自律型コーディングAI（Claude）です。与えられた要件のコードを実装してください。
+出力は必ず以下のJSON形式の配列のみを返してください。マークダウンやその他の説明文は一切含めないでください。ルートディレクトリは \`apps/web/\` や \`apps/worker/\` などのパスを指定します。
+[
+  {
+    "file": "apps/web/src/app/page.tsx",
+    "content": "完全なファイルの内容..."
+  }
+]`,
           messages: [{ role: 'user', content: prompt }]
       });
-      const claudeResult = claudeMsg.content[0].type === 'text' ? claudeMsg.content[0].text : '実装完了';
+      const claudeResult = claudeMsg.content[0].type === 'text' ? claudeMsg.content[0].text : '[]';
 
-      // Step 2: Manager (Gemini) reviews Claude's work for FREE
+      let filesUpdated = 0;
+      let pushSuccess = false;
+      try {
+        // Extract JSON array if Claude added markdown blocks
+        const jsonMatch = claudeResult.match(/\[[\s\S]*\]/);
+        const jsonStr = jsonMatch ? jsonMatch[0] : claudeResult;
+        const filesToUpdate = JSON.parse(jsonStr);
+        
+        for (const item of filesToUpdate) {
+          const fullPath = path.resolve(__dirname, '../../', item.file);
+          fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+          fs.writeFileSync(fullPath, item.content, 'utf8');
+          filesUpdated++;
+          console.log(`🤖 [MULTI-AGENT] Wrote file: ${item.file}`);
+        }
+
+        // Git Push if we have a token
+        if (filesUpdated > 0 && process.env.GITHUB_TOKEN) {
+          console.log(`🤖 [MULTI-AGENT] Pushing ${filesUpdated} files to GitHub...`);
+          execSync(`git config --global user.name "Zennobate AI Worker"`);
+          execSync(`git config --global user.email "worker@ai.local"`);
+          execSync(`git remote set-url origin https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/spitarmy/dev-core-.git`);
+          execSync(`git add .`);
+          execSync(`git commit -m "feat: AI automated implementation for task"`);
+          execSync(`git push origin main`);
+          pushSuccess = true;
+          console.log(`🤖 [MULTI-AGENT] Successfully pushed to GitHub!`);
+        } else if (filesUpdated > 0) {
+           console.log(`🤖 [MULTI-AGENT] Files updated locally, but GITHUB_TOKEN not found. Skipping push.`);
+        }
+      } catch (err) {
+        console.error("JSON Parse or Git error:", err);
+      }
+
+      // Step 2: Manager (Gemini) reviews
       console.log('🤖 [MULTI-AGENT] Manager (Gemini) is reviewing Claude\'s work...');
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: `元の要件: ${prompt}\n\nClaudeの実装結果: ${claudeResult}`,
-        config: { systemInstruction: "あなたはレビュー担当のマネージャーAI（Gemini）です。部下のClaudeから上がってきたコード実装報告をレビューし、ユーザー向けの最終的な完了報告書（マークダウン形式）に綺麗にまとめてください。Claudeが素晴らしい仕事をしてくれたことを褒める一文も入れてください。" }
+        contents: `元の要件: ${prompt}\n\n更新されたファイル数: ${filesUpdated}\nGitへの自動Push成功: ${pushSuccess ? 'はい' : 'いいえ'}`,
+        config: { systemInstruction: "あなたはレビュー担当のマネージャーAIです。部下のClaudeから上がってきたコード実装報告をレビューし、ユーザー向けの最終的な完了報告書（マークダウン形式）に綺麗にまとめてください。ファイルが更新され自動でGitHubへPushされたこと（これにより自動デプロイが開始されたこと）をユーザーに伝えてください。失敗した場合はその旨を伝えてください。" }
       });
       return response.text || '完了';
 
