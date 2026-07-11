@@ -4,7 +4,11 @@ service cloud.firestore {
     match /tasks/{taskId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
-      allow update, delete: if false; // Local Worker側のみ更新可能にする
+      allow update: if request.auth != null;
+      allow delete: if false;
+    }
+    match /projectInfo/{docId} {
+      allow read: if request.auth != null;
     }
   }
 }
