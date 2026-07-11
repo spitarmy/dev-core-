@@ -2,9 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { db, storage } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 export default function NewTaskPage() {
   const [prompt, setPrompt] = useState("");
@@ -118,24 +117,34 @@ export default function NewTaskPage() {
     setSubmitProgress("処理を開始しています...");
     
     try {
-      let imageUrl = null;
+      let imageDataUrl: string | null = null;
+
       if (image) {
         setSubmitProgress("画像を圧縮中...");
-        const compressedBlob = await compressImage(image);
-        
-        setSubmitProgress("画像をアップロード中...");
-        const storageRef = ref(storage, `tasks/${Date.now()}_image.jpg`);
-        await uploadBytes(storageRef, compressedBlob);
-        setSubmitProgress("画像URLを取得中...");
-        imageUrl = await getDownloadURL(storageRef);
+        try {
+          const compressedBlob = await compressImage(image);
+          // Convert to base64 data URL (stored directly in Firestore, no Storage needed)
+          imageDataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(compressedBlob);
+          });
+          setSubmitProgress("画像の準備完了！");
+        } catch (imgErr) {
+          console.warn("Image processing failed, sending without image:", imgErr);
+          setSubmitProgress("画像の処理をスキップ、テキストのみで送信します...");
+          imageDataUrl = null;
+        }
       }
 
       setSubmitProgress("タスクをデータベースに保存中...");
       // Firestoreの "tasks" コレクションに新しいタスクを保存
+      // 画像はbase64としてFirestoreに直接保存（Firebase Storageを使わない）
       await addDoc(collection(db, "tasks"), {
         prompt: prompt.trim(),
         model: model,
-        imageUrl: imageUrl,
+        imageUrl: imageDataUrl, // base64 data URL or null
         status: "QUEUED", // 待機中
         createdAt: serverTimestamp(),
       });
@@ -144,7 +153,7 @@ export default function NewTaskPage() {
       router.push("/");
     } catch (err: any) {
       console.error("Task creation failed:", err);
-      setError("タスクの送信に失敗しました。もう一度お試しください。");
+      setError("タスクの送信に失敗しました: " + (err.message || "不明なエラー"));
       setIsSubmitting(false);
       setSubmitProgress(null);
     }

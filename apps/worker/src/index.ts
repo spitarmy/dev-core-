@@ -316,13 +316,22 @@ async function startWorker() {
             let imageBase64: string | undefined;
             if (taskData.imageUrl) {
               try {
-                console.log(`[🔍 VISION] Fetching image from URL...`);
-                const res = await fetch(taskData.imageUrl);
-                const buf = await res.arrayBuffer();
-                imageBase64 = Buffer.from(buf).toString('base64');
-                console.log(`[🔍 VISION] Successfully converted image to Base64.`);
+                if (taskData.imageUrl.startsWith('data:')) {
+                  // Base64 data URL stored directly in Firestore
+                  const base64Match = taskData.imageUrl.match(/^data:[^;]+;base64,(.+)$/);
+                  if (base64Match) {
+                    imageBase64 = base64Match[1];
+                    console.log(`[🔍 VISION] Extracted Base64 from data URL.`);
+                  }
+                } else {
+                  console.log(`[🔍 VISION] Fetching image from URL...`);
+                  const res = await fetch(taskData.imageUrl);
+                  const buf = await res.arrayBuffer();
+                  imageBase64 = Buffer.from(buf).toString('base64');
+                  console.log(`[🔍 VISION] Successfully converted image to Base64.`);
+                }
               } catch (err) {
-                console.error("[🔍 VISION] Failed to fetch image:", err);
+                console.error("[🔍 VISION] Failed to process image:", err);
               }
             }
 
@@ -378,9 +387,16 @@ async function startWorker() {
             let imageBase64: string | undefined;
             if (taskData.imageUrl) {
               try {
-                const res = await fetch(taskData.imageUrl);
-                const buf = await res.arrayBuffer();
-                imageBase64 = Buffer.from(buf).toString('base64');
+                if (taskData.imageUrl.startsWith('data:')) {
+                  const base64Match = taskData.imageUrl.match(/^data:[^;]+;base64,(.+)$/);
+                  if (base64Match) {
+                    imageBase64 = base64Match[1];
+                  }
+                } else {
+                  const res = await fetch(taskData.imageUrl);
+                  const buf = await res.arrayBuffer();
+                  imageBase64 = Buffer.from(buf).toString('base64');
+                }
               } catch (err) {
                 console.error(err);
               }
