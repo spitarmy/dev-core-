@@ -120,8 +120,8 @@ async function executeTask(prompt: string, model: string): Promise<string> {
       console.log('🤖 [MULTI-AGENT] Manager (Gemini) is reviewing Claude\'s work...');
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: `元の要件: ${prompt}\n\n更新されたファイル数: ${filesUpdated}\nGitへの自動Push成功: ${pushSuccess ? 'はい' : 'いいえ'}`,
-        config: { systemInstruction: "あなたはレビュー担当のマネージャーAIです。部下のClaudeから上がってきたコード実装報告をレビューし、ユーザー向けの最終的な完了報告書（マークダウン形式）に綺麗にまとめてください。ファイルが更新され自動でGitHubへPushされたこと（これにより自動デプロイが開始されたこと）をユーザーに伝えてください。失敗した場合はその旨を伝えてください。" }
+        contents: `元の要件: ${prompt}\n\nClaudeの実装内容(JSON): ${claudeResult.substring(0, 2000)}... (省略)\n\n更新されたファイル数: ${filesUpdated}\nGitへの自動Push成功: ${pushSuccess ? 'はい' : 'いいえ'}`,
+        config: { systemInstruction: "あなたはレビュー担当のマネージャーAIです。部下のClaudeがコードを書き換えました。Claudeの実装内容（JSONのfile名やcontentの中身）を読み解き、「どのファイルの、どの部分を、どのように変更したか」をユーザーに分かりやすく解説する完了報告書（マークダウン形式）を作成してください。最後に、自動でGitHubへPushされ、本番環境への自動デプロイが開始されたことも伝えてください。" }
       });
       return response.text || '完了';
 
