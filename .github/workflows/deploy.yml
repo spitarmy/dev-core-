@@ -21,7 +21,7 @@ jobs:
         run: npm install
         
       - name: Build Web App
-        run: npm run build
+        run: set -o pipefail && npm run build | tee ../../build.log
         working-directory: ./apps/web
         env:
           NEXT_PUBLIC_FIREBASE_API_KEY: "AIzaSyDqVbxok3OQgAMwO7G9D5WsxJKY5y6FlPU"
@@ -38,3 +38,9 @@ jobs:
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
           channelId: live
           projectId: fo-as-ai
+
+      - name: Report Failure to AI
+        if: failure()
+        env:
+          FIREBASE_SERVICE_ACCOUNT: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+        run: node scripts/report-error.js
