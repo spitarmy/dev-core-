@@ -43,7 +43,12 @@ async function generatePlan(prompt: string, model: string, imageBase64?: string,
          【現在のプロジェクトの設計指針とあなたの記憶】
          ${memoryText || 'まだ記憶はありません。'}
          
-         【重要】必要に応じて最新のライブラリや公式ドキュメントをGoogle検索でリサーチし、その結果（最新のコード例や注意点）を必ず計画に含めてください。
+         【重要】ユーザーの指示が曖昧すぎて実装が進められない場合（例：「いい感じにして」だけで具体的なページ指定がないなど）は、無理に推測せず、ユーザーに質問を返してください。その場合、必ず以下のJSONのみを出力してください。
+         \`\`\`json
+         { "status": "CLARIFICATION_NEEDED", "question": "どのページのデザインを変更しますか？" }
+         \`\`\`
+         
+         指示が十分な場合は、通常通り計画を作成します。必要に応じて最新のライブラリや公式ドキュメントをGoogle検索でリサーチし、その結果（最新のコード例や注意点）を必ず計画に含めてください。
          【重要】さらに、このタスクを複数の専門家AIに分割して担当させるための「チーム編成表」を、以下のJSON形式で必ず計画の最後に含めてください。
          \`\`\`json
          [
@@ -207,6 +212,26 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
 
       return response.text || '完了';
 
+    } else if (model === 'system-rollback') {
+      console.log('🤖 [ROLLBACK] Executing system rollback...');
+      try {
+        if (process.env.GITHUB_TOKEN) {
+          execSync(`git config --global user.name "Zennobate AI Worker"`);
+          execSync(`git config --global user.email "worker@ai.local"`);
+          execSync(`git remote set-url origin https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/spitarmy/dev-core-.git`);
+          // Revert the last commit safely
+          execSync(`git revert --no-edit HEAD`);
+          execSync(`git push origin main`);
+          console.log(`🤖 [ROLLBACK] Successfully reverted and pushed to GitHub!`);
+          return "【ロールバック完了】\n直前の変更を無事に無かったことにし、安全な状態をGitHubへPushしました。";
+        } else {
+          return "エラー: GITHUB_TOKENが設定されていないためロールバックできません。";
+        }
+      } catch (err) {
+        console.error("Rollback error:", err);
+        return "エラー: ロールバックに失敗しました。";
+      }
+
     } else if (model === 'claude-fable-5') {
       const msg = await anthropic.messages.create({
           model: 'claude-3-5-sonnet-20240620',
@@ -302,6 +327,24 @@ async function startWorker() {
             }
 
             const plan = await generatePlan(taskData.prompt, taskData.model, imageBase64, memoryText);
+
+            // 逆質問の確認
+            try {
+              const clarifMatch = plan.match(/```json\n([\s\S]*?)\n```/);
+              if (clarifMatch) {
+                const parsed = JSON.parse(clarifMatch[1]);
+                if (parsed.status === "CLARIFICATION_NEEDED") {
+                  await change.doc.ref.update({
+                    status: 'CLARIFICATION_NEEDED',
+                    summary: parsed.question,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                  });
+                  return; // ここで終了し、ユーザーの回答を待つ
+                }
+              }
+            } catch (e) {
+              // 無視して通常処理へ
+            }
 
             await change.doc.ref.update({
               status: 'WAITING_APPROVAL',

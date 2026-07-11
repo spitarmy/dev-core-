@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
-import { collection, query, orderBy, onSnapshot, doc, updateDoc } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc } from "firebase/firestore";
 
 export default function Home() {
   const [isClient, setIsClient] = useState(false);
   const [tasks, setTasks] = useState<any[]>([]);
+  const [isRollingBack, setIsRollingBack] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -45,6 +46,41 @@ export default function Home() {
     }
   };
 
+  const handleRollback = async () => {
+    if (!confirm("本当に直前のAIの変更を取り消して元に戻しますか？")) return;
+    setIsRollingBack(true);
+    try {
+      await addDoc(collection(db, "tasks"), {
+        prompt: "【システムロールバック】直前の変更を取り消します。",
+        model: "system-rollback",
+        status: "QUEUED",
+        createdAt: new Date(),
+        summary: ""
+      });
+      alert("ロールバックタスクを送信しました。数十秒後に自動で元の状態に戻ります。");
+    } catch (e) {
+      console.error(e);
+      alert("エラーが発生しました。");
+    } finally {
+      setIsRollingBack(false);
+    }
+  };
+
+  const handleAnswerClarification = async (taskId: string, currentPrompt: string) => {
+    const answer = window.prompt("AIからの質問に回答してください:");
+    if (!answer) return;
+    try {
+      await updateDoc(doc(db, "tasks", taskId), { 
+        status: "QUEUED",
+        prompt: currentPrompt + "\n\n【追加回答】\n" + answer,
+        summary: "ユーザーが回答しました。再分析中..."
+      });
+    } catch (e) {
+      console.error(e);
+      alert("エラーが発生しました。");
+    }
+  };
+
   // ステータスに応じた色や日本語表示の変換
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -63,6 +99,8 @@ export default function Home() {
         return <span style={{ background: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>却下済</span>;
       case "FAILED":
         return <span style={{ background: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>エラー</span>;
+      case "CLARIFICATION_NEEDED":
+        return <span style={{ background: 'rgba(234, 179, 8, 0.2)', color: '#eab308', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem', border: '1px solid #eab308' }}>質問があります</span>;
       default:
         return <span style={{ background: 'rgba(139, 92, 246, 0.2)', color: 'var(--primary)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>{status || "待機中"}</span>;
     }
@@ -93,7 +131,17 @@ export default function Home() {
 
       <main>
         <section className="glass-panel" style={{ padding: '2rem', marginBottom: '2rem' }}>
-          <h2 className="animate-fade-in delay-300">タスク一覧 (依頼リスト)</h2>
+          <div className="flex-between animate-fade-in delay-300">
+            <h2>タスク一覧 (依頼リスト)</h2>
+            <button 
+              className="btn btn-outline" 
+              style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+              onClick={handleRollback}
+              disabled={isRollingBack}
+            >
+              {isRollingBack ? '処理中...' : '↩️ 直前の変更を取り消す'}
+            </button>
+          </div>
           
           {tasks.length === 0 ? (
             <p className="text-secondary" style={{ marginTop: '1rem' }}>まだ依頼はありません。「新しい指示を出す」からAIに開発を依頼してみましょう。</p>
@@ -141,6 +189,18 @@ export default function Home() {
                           onClick={() => handleApprove(task.id)}
                         >
                           計画を承認
+                        </button>
+                      </div>
+                    )}
+
+                    {task.status === 'CLARIFICATION_NEEDED' && (
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button 
+                          className="btn btn-primary" 
+                          style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
+                          onClick={() => handleAnswerClarification(task.id, task.prompt)}
+                        >
+                          回答する
                         </button>
                       </div>
                     )}
