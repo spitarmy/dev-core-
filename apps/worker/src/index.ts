@@ -39,12 +39,14 @@ async function generatePlan(prompt: string, model: string, imageBase64?: string)
   try {
     const isAuto = model === 'auto-multi-agent';
     const systemInstruction = isAuto 
-      ? `あなたは優秀なAIマネージャーです。以下のユーザーからの指示を読み、どのAIに何を任せるか（コスト最適化のための分割）の「実装計画」を作成してください。
+      ? `あなたは優秀なAIマネージャーです。以下のユーザーからの指示を読み、実装計画を作成してください。
+         【重要】必要に応じて最新のライブラリや公式ドキュメントをGoogle検索でリサーチし、その結果（最新のコード例や注意点）を必ず計画に含めてください。
          例: 
          - デザインや高度なコーディングは、Anthropic社のClaude 3.5に依頼します。
          - 全体の構成レビューと報告まとめは、私（Google Gemini）が担当しコストを削減します。
+         - [リサーチメモ]: Stripeの最新APIでは...
          最後に「よろしければ承認をお願いします」と添えてください。`
-      : `あなたはシニアエンジニアです。以下の指示に対する具体的な「実装計画」をステップバイステップで作成し、最後に「よろしければ承認をお願いします」と添えてください。`;
+      : `あなたはシニアエンジニアです。以下の指示に対する具体的な「実装計画」をステップバイステップで作成し、必要に応じて最新情報を検索して計画に含め、最後に「よろしければ承認をお願いします」と添えてください。`;
 
     const contents: any[] = [{ text: prompt }];
     if (imageBase64) {
@@ -60,7 +62,10 @@ async function generatePlan(prompt: string, model: string, imageBase64?: string)
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: contents,
-      config: { systemInstruction }
+      config: { 
+        systemInstruction,
+        tools: [{ googleSearch: {} }]
+      }
     });
 
     return response.text || '計画の作成に失敗しました。';
@@ -70,7 +75,7 @@ async function generatePlan(prompt: string, model: string, imageBase64?: string)
   }
 }
 
-async function executeTask(prompt: string, model: string, imageBase64?: string): Promise<string> {
+async function executeTask(prompt: string, model: string, imageBase64?: string, plan?: string): Promise<string> {
   try {
     if (model === 'auto-multi-agent') {
       console.log('🤖 [MULTI-AGENT] Starting Auto-Routing Workflow...');
@@ -81,6 +86,10 @@ async function executeTask(prompt: string, model: string, imageBase64?: string):
           model: 'claude-3-5-sonnet-20240620',
           max_tokens: 3000,
           system: `あなたは自律型コーディングAI（Claude）です。与えられた要件のコードを実装してください。
+以下はマネージャー（Gemini）が検索・作成した実装計画と事前リサーチメモです。これを参考に最新の仕様で実装してください。
+<plan>
+${plan || '計画なし'}
+</plan>
 出力は必ず以下のJSON形式の配列のみを返してください。マークダウンやその他の説明文は一切含めないでください。ルートディレクトリは \`apps/web/\` や \`apps/worker/\` などのパスを指定します。
 [
   {
@@ -266,7 +275,9 @@ async function startWorker() {
               }
             }
 
-            const result = await executeTask(taskData.prompt, taskData.model, imageBase64);
+            // 以前の計画（リサーチ結果）を取得してClaudeに渡す
+            const planText = taskData.summary || '';
+            const result = await executeTask(taskData.prompt, taskData.model, imageBase64, planText);
 
             await change.doc.ref.update({
               status: 'COMPLETED',
