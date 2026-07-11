@@ -23,6 +23,13 @@ jobs:
       - name: Build Web App
         run: npm run build
         working-directory: ./apps/web
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: "AIzaSyDqVbxok3OQgAMwO7G9D5WsxJKY5y6FlPU"
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "fo-as-ai.firebaseapp.com"
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: "fo-as-ai"
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: "fo-as-ai.firebasestorage.app"
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "554152980398"
+          NEXT_PUBLIC_FIREBASE_APP_ID: "1:554152980398:web:9b8983b681311e867ea23f"
         
       - name: Deploy to Firebase
         uses: FirebaseExtended/action-hosting-deploy@v0
