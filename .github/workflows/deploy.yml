@@ -24,7 +24,7 @@ jobs:
         run: set -o pipefail && npm run build | tee ../../build.log
         working-directory: ./apps/web
         env:
-          NEXT_PUBLIC_FIREBASE_API_KEY: "AIzaSyDqVbxok3OQgAMwO7G9D5WsxJKY5y6FlPU"
+          NEXT_PUBLIC_FIREBASE_API_KEY: "AIzaSyDqVBxok3OQgAMwO7G9D5WsxJKY5y6FlPU"
           NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "fo-as-ai.firebaseapp.com"
           NEXT_PUBLIC_FIREBASE_PROJECT_ID: "fo-as-ai"
           NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: "fo-as-ai.firebasestorage.app"

@@ -4,29 +4,53 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc } from "firebase/firestore";
 
 export default function Home() {
   const [isClient, setIsClient] = useState(false);
   const [tasks, setTasks] = useState<any[]>([]);
   const [isRollingBack, setIsRollingBack] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<string>("読み込み中...");
+  const [authUser, setAuthUser] = useState<any>(null);
   const router = useRouter();
 
   useEffect(() => {
     setIsClient(true);
-    
-    // Firestoreからリアルタイムでタスク一覧を取得
-    const q = query(collection(db, "tasks"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const taskData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setTasks(taskData);
+
+    // 認証状態を監視
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        setDebugInfo("未ログイン。ログイン画面へ移動します...");
+        router.push("/login");
+        return;
+      }
+      setAuthUser(user);
+      setDebugInfo(`ログイン済み: ${user.email} | Firestoreに接続中...`);
+
+      // Firestoreからリアルタイムでタスク一覧を取得
+      try {
+        const q = query(collection(db, "tasks"), orderBy("createdAt", "desc"));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const taskData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setTasks(taskData);
+          setDebugInfo(`ログイン済み: ${user.email} | タスク: ${taskData.length}件`);
+        }, (error) => {
+          setDebugInfo(`Firestoreエラー: ${error.code} - ${error.message}`);
+          console.error("Firestore error:", error);
+        });
+
+        return () => unsubscribe();
+      } catch (e: any) {
+        setDebugInfo(`初期化エラー: ${e.message}`);
+      }
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => unsubAuth();
+  }, [router]);
 
   if (!isClient) return null;
 
@@ -112,6 +136,7 @@ export default function Home() {
         <div>
           <h1 className="text-gradient animate-fade-in" style={{ lineHeight: 1.1, marginBottom: '0.5rem' }}>ZENNOBATE DEV CORE</h1>
           <p className="text-secondary animate-fade-in delay-100">自分専用のAI開発システム</p>
+          <p style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.25rem', fontFamily: 'monospace' }}>{debugInfo}</p>
         </div>
         <div className="btn-group animate-fade-in delay-200">
           <button 
