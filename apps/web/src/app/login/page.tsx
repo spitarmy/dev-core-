@@ -15,11 +15,20 @@ export default function LoginPage() {
     setError(null);
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-      router.push("/");
+      const result = await signInWithPopup(auth, provider);
+      if (result.user) {
+        // ログイン成功 - ホームへ遷移
+        window.location.href = "/";
+      }
     } catch (err: any) {
       console.error("Login failed:", err);
-      setError(err.message || "Failed to login");
+      if (err.code === "auth/popup-blocked") {
+        setError("ポップアップがブロックされました。ブラウザの設定でポップアップを許可してください。");
+      } else if (err.code === "auth/popup-closed-by-user") {
+        setError("ログインがキャンセルされました。");
+      } else {
+        setError(err.message || "ログインに失敗しました");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -41,7 +50,7 @@ export default function LoginPage() {
         </button>
 
         {error && (
-          <p style={{ color: 'var(--danger)', marginTop: '1rem', fontSize: '0.875rem' }}>
+          <p style={{ color: 'var(--danger)', marginTop: '1rem', fontSize: '0.875rem', wordBreak: 'break-all' }}>
             {error}
           </p>
         )}

@@ -51,60 +51,28 @@ export default function NewTaskPage() {
     recognition.start();
   };
 
-  const compressImage = (file: File): Promise<Blob> => {
+  const readFileAsDataURL = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error("ファイルの読み込みに失敗しました"));
       reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 1024;
-          const MAX_HEIGHT = 1024;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > MAX_WIDTH) {
-              height *= MAX_WIDTH / width;
-              width = MAX_WIDTH;
-            }
-          } else {
-            if (height > MAX_HEIGHT) {
-              width *= MAX_HEIGHT / height;
-              height = MAX_HEIGHT;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-
-          canvas.toBlob((blob) => {
-            if (blob) {
-              resolve(blob);
-            } else {
-              reject(new Error('Canvas to Blob failed'));
-            }
-          }, 'image/jpeg', 0.7);
-        };
-        img.onerror = (error) => reject(error);
-      };
-      reader.onerror = (error) => reject(error);
     });
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setImage(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const dataUrl = await readFileAsDataURL(file);
+        setImagePreview(dataUrl);
+      } catch (err) {
+        console.error("Image preview failed:", err);
+        setImage(null);
+        setImagePreview(null);
+        alert("画像の読み込みに失敗しました。別の画像を試してください。");
+      }
     }
   };
 
@@ -117,25 +85,17 @@ export default function NewTaskPage() {
     setSubmitProgress("処理を開始しています...");
     
     try {
-      let imageDataUrl: string | null = null;
+      // 画像がある場合はプレビュー用のdata URLをそのまま使う
+      let imageDataUrl: string | null = imagePreview;
 
-      if (image) {
-        setSubmitProgress("画像を圧縮中...");
-        try {
-          const compressedBlob = await compressImage(image);
-          // Convert to base64 data URL (stored directly in Firestore, no Storage needed)
-          imageDataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(compressedBlob);
-          });
-          setSubmitProgress("画像の準備完了！");
-        } catch (imgErr) {
-          console.warn("Image processing failed, sending without image:", imgErr);
-          setSubmitProgress("画像の処理をスキップ、テキストのみで送信します...");
-          imageDataUrl = null;
-        }
+      if (imageDataUrl && imageDataUrl.length > 800000) {
+        // 800KB超えの場合はスキップ（Firestoreの1MBドキュメント制限）
+        setSubmitProgress("画像が大きすぎるため、テキストのみで送信します...");
+        imageDataUrl = null;
+      }
+
+      if (imageDataUrl) {
+        setSubmitProgress("画像付きで送信中...");
       }
 
       setSubmitProgress("タスクをデータベースに保存中...");
@@ -224,9 +184,10 @@ export default function NewTaskPage() {
                 style={{ cursor: 'pointer' }}
               >
                 <option value="auto-multi-agent" style={{ fontWeight: 'bold' }}>✨ Auto (AI同士で分担・コスト最適化)</option>
-                <option value="gemini-3.5-ultra">Google Gemini 3.5 Ultra (総合的で高度なタスク)</option>
                 <option value="claude-fable-5">Claude Fable 5 (超高速・高品質コーディング)</option>
-                <option value="gpt-5.6-sol">GPT-5.6 Sol (複雑な設計と自律エージェント)</option>
+                <option value="claude-sonnet-5">Claude Sonnet 5 (最新・バランス型)</option>
+                <option value="gpt-4.1">GPT-4.1 (OpenAI最新・高精度)</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash (高速・無料枠あり)</option>
               </select>
             </div>
 

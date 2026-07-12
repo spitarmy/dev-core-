@@ -132,35 +132,39 @@ export default function Home() {
 
   return (
     <div className="container">
-      <header className="header-layout" style={{ padding: '2rem 0' }}>
+      <header style={{ padding: '2rem 0', textAlign: 'center' }}>
         <div>
           <h1 className="text-gradient animate-fade-in" style={{ lineHeight: 1.1, marginBottom: '0.5rem' }}>ZENNOBATE DEV CORE</h1>
           <p className="text-secondary animate-fade-in delay-100">自分専用のAI開発システム</p>
           <p style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.25rem', fontFamily: 'monospace' }}>{debugInfo}</p>
         </div>
-        <div className="btn-group animate-fade-in delay-200">
+        <div className="animate-fade-in delay-200" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
+          <Link href="/task/new" className="btn btn-primary" style={{ textDecoration: 'none', width: '100%', textAlign: 'center' }}>
+            + 新しい指示を出す
+          </Link>
+          <Link href="/brainstorm" className="btn btn-outline" style={{ textDecoration: 'none', width: '100%', textAlign: 'center', borderColor: 'rgba(139, 92, 246, 0.4)', color: 'var(--primary)' }}>
+            💬 壁打ちモード
+          </Link>
           <button 
             className="btn btn-outline" 
+            style={{ width: '100%' }}
             onClick={() => {
               auth.signOut();
-              router.push("/login");
+              window.location.href = "/login";
             }}
           >
             ログアウト
           </button>
-          <Link href="/task/new" className="btn btn-primary" style={{ textDecoration: 'none' }}>
-            + 新しい指示を出す
-          </Link>
         </div>
       </header>
 
       <main>
-        <section className="glass-panel" style={{ padding: '2rem', marginBottom: '2rem' }}>
-          <div className="flex-between animate-fade-in delay-300">
-            <h2>タスク一覧 (依頼リスト)</h2>
+        <section className="glass-panel" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
+          <div className="animate-fade-in delay-300" style={{ marginBottom: '1rem' }}>
+            <h2 style={{ fontSize: '1.2rem', marginBottom: '0.75rem' }}>タスク一覧 (依頼リスト)</h2>
             <button 
               className="btn btn-outline" 
-              style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+              style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)', fontSize: '0.8rem', padding: '0.4rem 0.8rem', width: '100%' }}
               onClick={handleRollback}
               disabled={isRollingBack}
             >
@@ -171,7 +175,7 @@ export default function Home() {
           {tasks.length === 0 ? (
             <p className="text-secondary" style={{ marginTop: '1rem' }}>まだ依頼はありません。「新しい指示を出す」からAIに開発を依頼してみましょう。</p>
           ) : (
-            <div className="grid-cols-2" style={{ marginTop: '1.5rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
               {tasks.map((task) => (
                 <div key={task.id} className="glass-card animate-fade-in delay-300">
                   <div className="flex-between">
