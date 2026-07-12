@@ -1,29 +1,50 @@
 "use client";
 
-import { useState } from "react";
-import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
+import { useState, useEffect } from "react";
+import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const router = useRouter();
+
+  // F2修正: redirect結果をチェック（iOSからのリダイレクト戻り）
+  useEffect(() => {
+    getRedirectResult(auth).then((result) => {
+      if (result?.user) {
+        window.location.href = "/";
+      }
+    }).catch((err) => {
+      console.error("Redirect result error:", err);
+    });
+  }, []);
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
     setError(null);
     try {
       const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      if (result.user) {
-        // ログイン成功 - ホームへ遷移
-        window.location.href = "/";
+      // F2修正: モバイルはredirect、PCはpopup
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile) {
+        await signInWithRedirect(auth, provider);
+        // redirect後はページ遷移するのでここには戻らない
+      } else {
+        const result = await signInWithPopup(auth, provider);
+        if (result.user) {
+          window.location.href = "/";
+        }
       }
     } catch (err: any) {
       console.error("Login failed:", err);
       if (err.code === "auth/popup-blocked") {
-        setError("ポップアップがブロックされました。ブラウザの設定でポップアップを許可してください。");
+        // ポップアップブロック時はredirectにフォールバック
+        try {
+          const provider = new GoogleAuthProvider();
+          await signInWithRedirect(auth, provider);
+        } catch (e2) {
+          setError("ログインに失敗しました。もう一度お試しください。");
+        }
       } else if (err.code === "auth/popup-closed-by-user") {
         setError("ログインがキャンセルされました。");
       } else {

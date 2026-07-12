@@ -311,14 +311,24 @@ async function startWorker() {
 
   const tasksRef = db.collection('tasks');
   
+  // W2修正: 重複処理防止用Set
+  const processingTasks = new Set<string>();
+
+  const startTaskListener = () => {
   tasksRef.where('status', 'in', ['QUEUED', 'APPROVED'])
-    .onSnapshot((snapshot) => {
-      snapshot.docChanges().forEach(async (change) => {
+    .onSnapshot(async (snapshot) => {
+      // W1修正: forEach(async...) → for...of
+      for (const change of snapshot.docChanges()) {
+        try {
         if (change.type === 'added' || change.type === 'modified') {
           const taskData = change.doc.data();
           const taskId = change.doc.id;
           
+          // W2: 重複処理ガード
+          if (processingTasks.has(taskId)) continue;
+
           if (taskData.status === 'QUEUED') {
+            processingTasks.add(taskId);
             console.log(`\n[📥 NEW TASK] Detected QUEUED task: T-${taskId.substring(0, 4).toUpperCase()}`);
             
             let memoryText = "";
@@ -437,13 +447,24 @@ async function startWorker() {
             });
             console.log(`[🎉 DONE] Task T-${taskId.substring(0, 4).toUpperCase()} completed.`);
           }
+          }
+        } catch (err) {
+          console.error(`[ERROR] Task processing failed:`, err);
+        } finally {
+          processingTasks.delete(change.doc.id);
         }
-      });
-    }, (error) => {
+      }
+    }, (error: any) => {
       console.error('Error listening to tasks:', error);
+      // W5修正: エラー時に再接続
+      console.log('🔄 Reconnecting task listener in 5 seconds...');
+      setTimeout(startTaskListener, 5000);
     });
+  };
+  startTaskListener();
 
     // === 壁打ちモード: brainstormsコレクションの監視 ===
+    const startBrainstormListener = () => {
     const brainstormQuery = db.collection('brainstorms').where('status', '==', 'thinking');
     brainstormQuery.onSnapshot(async (snapshot: any) => {
       for (const change of snapshot.docChanges()) {
@@ -494,7 +515,11 @@ async function startWorker() {
       }
     }, (error: any) => {
       console.error('Error listening to brainstorms:', error);
+      console.log('🔄 Reconnecting brainstorm listener in 5 seconds...');
+      setTimeout(startBrainstormListener, 5000);
     });
+  };
+  startBrainstormListener();
 }
 
 startWorker().catch(console.error);

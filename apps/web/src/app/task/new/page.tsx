@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 export default function NewTaskPage() {
@@ -15,6 +16,14 @@ export default function NewTaskPage() {
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  // F3修正: 認証ガード
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (!user) router.push("/login");
+    });
+    return () => unsub();
+  }, [router]);
 
   const startListening = () => {
     if (typeof window === 'undefined') return;
@@ -165,6 +174,12 @@ export default function NewTaskPage() {
                 placeholder="例: 新しいプロジェクト作成機能を追加して。ボタンの色は青でお願いします。"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    handleSubmit(e as any);
+                  }
+                }}
                 autoFocus
               />
             </div>

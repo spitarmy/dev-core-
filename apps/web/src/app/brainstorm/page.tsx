@@ -61,14 +61,18 @@ export default function BrainstormPage() {
 
   const startNewSession = async () => {
     if (!userId) return;
-    const docRef = await addDoc(collection(db, "brainstorms"), {
-      userId,
-      messages: [],
-      status: "active",
-      createdAt: serverTimestamp(),
-    });
-    setSessionId(docRef.id);
-    setMessages([]);
+    try {
+      const docRef = await addDoc(collection(db, "brainstorms"), {
+        userId,
+        messages: [],
+        status: "active",
+        createdAt: serverTimestamp(),
+      });
+      setSessionId(docRef.id);
+      setMessages([]);
+    } catch (err) {
+      console.error("Session creation failed:", err);
+    }
   };
 
   const sendMessage = async () => {
@@ -78,43 +82,51 @@ export default function BrainstormPage() {
     const updatedMessages = [...messages, newMessage];
 
     setInput("");
+    setMessages(updatedMessages); // 楽観的UI更新
     setIsLoading(true);
 
-    // Firestoreに書き込み → Workerが検知してAI応答を追記
-    await updateDoc(doc(db, "brainstorms", sessionId), {
-      messages: updatedMessages,
-      status: "thinking", // Workerがこれを検知
-    });
+    try {
+      await updateDoc(doc(db, "brainstorms", sessionId), {
+        messages: updatedMessages,
+        status: "thinking",
+      });
+    } catch (err) {
+      console.error("Send failed:", err);
+      setMessages(messages); // 元に戻す
+      setIsLoading(false);
+    }
   };
 
   const createTaskFromBrainstorm = async () => {
     if (!sessionId || messages.length === 0) return;
     setIsLoading(true);
 
-    // 会話全体をまとめてタスク作成用に変換
-    const conversationSummary = messages
-      .map((m) => `${m.role === "user" ? "ユーザー" : "AI"}: ${m.text}`)
-      .join("\n\n");
+    try {
+      const conversationSummary = messages
+        .map((m) => `${m.role === "user" ? "ユーザー" : "AI"}: ${m.text}`)
+        .join("\n\n");
 
-    const taskPrompt = `【壁打ちモードでの相談結果】\n以下の会話で決まった内容を実装してください。\n\n${conversationSummary}`;
+      const taskPrompt = `【壁打ちモードでの相談結果】\n以下の会話で決まった内容を実装してください。\n\n${conversationSummary}`;
 
-    // タスクをFirestoreに作成
-    await addDoc(collection(db, "tasks"), {
-      prompt: taskPrompt,
-      model: "auto-multi-agent",
-      imageUrl: null,
-      status: "QUEUED",
-      createdAt: serverTimestamp(),
-      brainstormId: sessionId,
-    });
+      await addDoc(collection(db, "tasks"), {
+        prompt: taskPrompt,
+        model: "auto-multi-agent",
+        imageUrl: null,
+        status: "QUEUED",
+        createdAt: serverTimestamp(),
+        brainstormId: sessionId,
+      });
 
-    // 壁打ちセッションのステータスを更新
-    await updateDoc(doc(db, "brainstorms", sessionId), {
-      status: "submitted",
-    });
+      await updateDoc(doc(db, "brainstorms", sessionId), {
+        status: "submitted",
+      });
 
-    setIsLoading(false);
-    router.push("/");
+      router.push("/");
+    } catch (err) {
+      console.error("Task creation failed:", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (!isClient) return null;

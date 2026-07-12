@@ -27,6 +27,7 @@
   --danger: #ef4444;
   --success: #10b981;
   --warning: #f59e0b;
+  --accent: #06b6d4;
 
   --radius-sm: 0.5rem;
   --radius-md: 1rem;
@@ -35,6 +36,11 @@
   
   --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* Utility classes */
+.text-secondary { color: var(--text-secondary); }
+.text-muted { color: var(--text-muted); }
+.btn-danger { background: var(--danger); color: white; }
 
 * {
   box-sizing: border-box;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
@@ -13,13 +13,21 @@ export default function Home() {
   const [isRollingBack, setIsRollingBack] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>("読み込み中...");
   const [authUser, setAuthUser] = useState<any>(null);
+  const [showConfirm, setShowConfirm] = useState(false); // F6: カスタムconfirm
+  const unsubFirestoreRef = useRef<(() => void) | null>(null); // F1: リスナー管理
   const router = useRouter();
 
   useEffect(() => {
     setIsClient(true);
 
-    // 認証状態を監視
+    // F1修正: リスナーを適切にクリーンアップ
     const unsubAuth = onAuthStateChanged(auth, (user) => {
+      // 前のFirestoreリスナーをクリーンアップ
+      if (unsubFirestoreRef.current) {
+        unsubFirestoreRef.current();
+        unsubFirestoreRef.current = null;
+      }
+
       if (!user) {
         setDebugInfo("未ログイン。ログイン画面へ移動します...");
         router.push("/login");
@@ -28,13 +36,12 @@ export default function Home() {
       setAuthUser(user);
       setDebugInfo(`ログイン済み: ${user.email} | Firestoreに接続中...`);
 
-      // Firestoreからリアルタイムでタスク一覧を取得
       try {
         const q = query(collection(db, "tasks"), orderBy("createdAt", "desc"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-          const taskData = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
+        const unsubFirestore = onSnapshot(q, (snapshot) => {
+          const taskData = snapshot.docs.map(d => ({
+            id: d.id,
+            ...d.data()
           }));
           setTasks(taskData);
           setDebugInfo(`ログイン済み: ${user.email} | タスク: ${taskData.length}件`);
@@ -43,13 +50,19 @@ export default function Home() {
           console.error("Firestore error:", error);
         });
 
-        return () => unsubscribe();
+        unsubFirestoreRef.current = unsubFirestore;
       } catch (e: any) {
         setDebugInfo(`初期化エラー: ${e.message}`);
       }
     });
 
-    return () => unsubAuth();
+    return () => {
+      unsubAuth();
+      if (unsubFirestoreRef.current) {
+        unsubFirestoreRef.current();
+        unsubFirestoreRef.current = null;
+      }
+    };
   }, [router]);
 
   if (!isClient) return null;
@@ -70,8 +83,13 @@ export default function Home() {
     }
   };
 
+  // F6修正: confirm() の代わりにカスタムUIを使う
   const handleRollback = async () => {
-    if (!confirm("本当に直前のAIの変更を取り消して元に戻しますか？")) return;
+    setShowConfirm(true);
+  };
+
+  const executeRollback = async () => {
+    setShowConfirm(false);
     setIsRollingBack(true);
     try {
       await addDoc(collection(db, "tasks"), {
@@ -81,10 +99,8 @@ export default function Home() {
         createdAt: new Date(),
         summary: ""
       });
-      alert("ロールバックタスクを送信しました。数十秒後に自動で元の状態に戻ります。");
     } catch (e) {
       console.error(e);
-      alert("エラーが発生しました。");
     } finally {
       setIsRollingBack(false);
     }
@@ -101,11 +117,9 @@ export default function Home() {
       });
     } catch (e) {
       console.error(e);
-      alert("エラーが発生しました。");
     }
   };
 
-  // ステータスに応じた色や日本語表示の変換
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "QUEUED":
@@ -132,6 +146,19 @@ export default function Home() {
 
   return (
     <div className="container">
+      {/* F6: カスタム確認ダイアログ */}
+      {showConfirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: '1rem' }}>
+          <div className="glass-card" style={{ maxWidth: '360px', width: '100%', textAlign: 'center' }}>
+            <p style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>⚠️ 直前のAIの変更を取り消して元に戻しますか？</p>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setShowConfirm(false)}>キャンセル</button>
+              <button className="btn btn-primary" style={{ flex: 1, background: 'var(--danger)' }} onClick={executeRollback}>取り消す</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header style={{ padding: '2rem 0', textAlign: 'center' }}>
         <div>
           <h1 className="text-gradient animate-fade-in" style={{ lineHeight: 1.1, marginBottom: '0.5rem' }}>ZENNOBATE DEV CORE</h1>
@@ -145,12 +172,12 @@ export default function Home() {
           <Link href="/brainstorm" className="btn btn-outline" style={{ textDecoration: 'none', width: '100%', textAlign: 'center', borderColor: 'rgba(139, 92, 246, 0.4)', color: 'var(--primary)' }}>
             💬 壁打ちモード
           </Link>
+          {/* F8修正: signOut を await */}
           <button 
             className="btn btn-outline" 
             style={{ width: '100%' }}
-            onClick={() => {
-              auth.signOut();
-              window.location.href = "/login";
+            onClick={async () => {
+              try { await auth.signOut(); } finally { window.location.href = "/login"; }
             }}
           >
             ログアウト
@@ -205,32 +232,14 @@ export default function Home() {
                     
                     {task.status === 'WAITING_APPROVAL' && (
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button 
-                          className="btn btn-outline" 
-                          style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
-                          onClick={() => handleReject(task.id)}
-                        >
-                          却下
-                        </button>
-                        <button 
-                          className="btn btn-primary" 
-                          style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
-                          onClick={() => handleApprove(task.id)}
-                        >
-                          計画を承認
-                        </button>
+                        <button className="btn btn-outline" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleReject(task.id)}>却下</button>
+                        <button className="btn btn-primary" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleApprove(task.id)}>計画を承認</button>
                       </div>
                     )}
 
                     {task.status === 'CLARIFICATION_NEEDED' && (
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button 
-                          className="btn btn-primary" 
-                          style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }}
-                          onClick={() => handleAnswerClarification(task.id, task.prompt)}
-                        >
-                          回答する
-                        </button>
+                        <button className="btn btn-primary" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleAnswerClarification(task.id, task.prompt)}>回答する</button>
                       </div>
                     )}
                   </div>
