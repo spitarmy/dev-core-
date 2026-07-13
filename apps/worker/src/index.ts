@@ -91,7 +91,8 @@ async function generatePlan(prompt: string, model: string, imageBase64?: string,
         system: systemInstruction,
         messages: [{ role: 'user', content: prompt }]
       });
-      return claudeFallback.content[0]?.type === 'text' ? claudeFallback.content[0].text : '計画の作成に失敗しました。';
+      const fallbackText = claudeFallback.content.find((b: any) => b.type === 'text');
+      return fallbackText ? (fallbackText as any).text : '計画の作成に失敗しました。';
     } catch (e2) {
       console.error("Claude Fallback also failed:", e2);
       return `【提案する実装計画】(APIエラー: GeminiとClaude両方失敗)\nよろしければ「承認」をお願いします。`;
@@ -157,7 +158,8 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
             ]
         });
 
-        const claudeResult = claudeMsg.content[0].type === 'text' ? claudeMsg.content[0].text : '[]';
+        const claudeTextBlock = claudeMsg.content.find((b: any) => b.type === 'text');
+        const claudeResult = claudeTextBlock ? (claudeTextBlock as any).text : '[]';
         allClaudeResults += `\n【${agent.role}の実装内容】\n${claudeResult.substring(0, 1000)}...`;
 
         try {
@@ -199,15 +201,33 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
         console.error("Git push error:", err);
       }
 
-      // Step 2: Manager (Gemini) reviews
-      console.log('🤖 [MULTI-AGENT] Manager (Gemini) is reviewing Claude\'s work...');
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: `元の要件: ${prompt}\n\nエージェントチームの作業結果: ${allClaudeResults}\n\n更新されたファイル数: ${totalFilesUpdated}\nGitへの自動Push成功: ${pushSuccess ? 'はい' : 'いいえ'}`,
-        config: { systemInstruction: "あなたはレビュー担当のマネージャーAIです。部下のAIチーム（Claude達）が連携してコードを書き換えました。各AIの実装内容を読み解き、「どのファイルがどのように変更されたか」をユーザーに分かりやすく解説する完了報告書（マークダウン形式）を作成してください。最後に、自動でGitHubへPushされ本番環境へのデプロイが開始されたことも伝えてください。" }
-      });
-      
-      // Step 3: Update Memory
+      // Step 2: Manager reviews (Gemini with Claude fallback)
+      console.log('🤖 [MULTI-AGENT] Manager is reviewing work...');
+      let reviewText = '完了';
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: `元の要件: ${prompt}\n\nエージェントチームの作業結果: ${allClaudeResults}\n\n更新されたファイル数: ${totalFilesUpdated}\nGitへの自動Push成功: ${pushSuccess ? 'はい' : 'いいえ'}`,
+          config: { systemInstruction: "あなたはレビュー担当のマネージャーAIです。部下のAIチーム（Claude達）が連携してコードを書き換えました。各AIの実装内容を読み解き、「どのファイルがどのように変更されたか」をユーザーに分かりやすく解説する完了報告書（マークダウン形式）を作成してください。最後に、自動でGitHubへPushされ本番環境へのデプロイが開始されたことも伝えてください。" }
+        });
+        reviewText = response.text || '完了';
+      } catch (geminiErr) {
+        console.error('Gemini review failed, using Claude fallback:', geminiErr);
+        try {
+          const claudeReview = await anthropic.messages.create({
+            model: 'claude-fable-5',
+            max_tokens: 2000,
+            system: "あなたはレビュー担当のマネージャーAIです。部下のAIチームが連携してコードを書き換えました。各AIの実装内容を読み解き、「どのファイルがどのように変更されたか」をユーザーに分かりやすく解説する完了報告書を作成してください。",
+            messages: [{ role: 'user', content: `元の要件: ${prompt}\n\n作業結果: ${allClaudeResults}\n\n更新ファイル数: ${totalFilesUpdated}\nGit Push: ${pushSuccess ? '成功' : '未実行'}` }]
+          });
+          const reviewBlock = claudeReview.content.find((b: any) => b.type === 'text');
+          reviewText = reviewBlock ? (reviewBlock as any).text : '完了';
+        } catch (e2) {
+          reviewText = `【完了報告】\n${totalFilesUpdated}ファイルを更新しました。${pushSuccess ? 'GitHubへPush済み。' : ''}`;
+        }
+      }
+
+      // Step 3: Update Memory (best-effort)
       console.log('🤖 [MULTI-AGENT] Updating Project Memory...');
       try {
         const memoryUpdateRes = await ai.models.generateContent({
@@ -219,10 +239,10 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
         await db.collection('projectInfo').doc('memory').set({ content: newMemory, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         console.log('🤖 [MULTI-AGENT] Memory updated successfully.');
       } catch(e) {
-        console.error("Failed to update memory", e);
+        console.error("Failed to update memory (non-critical)", e);
       }
 
-      return response.text || '完了';
+      return reviewText;
 
     } else if (model === 'system-rollback') {
       console.log('🤖 [ROLLBACK] Executing system rollback...');
@@ -301,7 +321,7 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
     }
   } catch (e) {
     console.error("Execute Task Error:", e);
-    return `【成果報告】(APIエラー)\n実装が完了しました。`;
+    throw e; // 呼び出し元でFAILEDステータスにさせる
   }
 }
 
@@ -448,8 +468,15 @@ async function startWorker() {
             console.log(`[🎉 DONE] Task T-${taskId.substring(0, 4).toUpperCase()} completed.`);
           }
           }
-        } catch (err) {
+        } catch (err: any) {
           console.error(`[ERROR] Task processing failed:`, err);
+          try {
+            await change.doc.ref.update({
+              status: 'FAILED',
+              summary: `【エラー】タスク処理に失敗しました: ${err?.message || '不明なエラー'}`,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+          } catch (_) {}
         } finally {
           processingTasks.delete(change.doc.id);
         }
