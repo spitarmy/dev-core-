@@ -2,79 +2,59 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { useAuth } from "@/lib/auth-context";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
 
 export default function Home() {
-  const [isClient, setIsClient] = useState(false);
+  const { user, loading: authLoading } = useAuth();
   const [tasks, setTasks] = useState<any[]>([]);
   const [isRollingBack, setIsRollingBack] = useState(false);
-  const [debugInfo, setDebugInfo] = useState<string>("読み込み中...");
-  const [authUser, setAuthUser] = useState<any>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [followUpTaskId, setFollowUpTaskId] = useState<string | null>(null);
   const [followUpText, setFollowUpText] = useState("");
-  const [authLoading, setAuthLoading] = useState(true);
   const unsubFirestoreRef = useRef<(() => void) | null>(null);
-  const router = useRouter();
 
+  // Auth確定後にFirestoreリスナーをセットアップ
   useEffect(() => {
-    setIsClient(true);
+    if (authLoading) return;
+    if (!user) return; // ログインページへのリダイレクトはJSX側で処理
 
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
-      // 前のFirestoreリスナーをクリーンアップ
-      if (unsubFirestoreRef.current) {
-        unsubFirestoreRef.current();
-        unsubFirestoreRef.current = null;
-      }
-
-      setAuthLoading(false);
-
-      if (!user) {
-        setDebugInfo("未ログイン。ログイン画面へ移動します...");
-        router.replace("/login");
-        return;
-      }
-      setAuthUser(user);
-      setDebugInfo(`ログイン済み: ${user.email} | Firestoreに接続中...`);
-
-      try {
-        const q = query(collection(db, "tasks"), orderBy("createdAt", "desc"));
-        const unsubFirestore = onSnapshot(q, (snapshot) => {
-          const taskData = snapshot.docs.map(d => ({
-            id: d.id,
-            ...d.data()
-          }));
-          setTasks(taskData);
-          setDebugInfo(`ログイン済み: ${user.email} | タスク: ${taskData.length}件`);
-        }, (error) => {
-          setDebugInfo(`Firestoreエラー: ${error.code} - ${error.message}`);
-          console.error("Firestore error:", error);
-        });
-
-        unsubFirestoreRef.current = unsubFirestore;
-      } catch (e: any) {
-        setDebugInfo(`初期化エラー: ${e.message}`);
-      }
+    const q = query(collection(db, "tasks"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setTasks(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      console.error("Firestore error:", error);
     });
+    unsubFirestoreRef.current = unsub;
 
     return () => {
-      unsubAuth();
-      if (unsubFirestoreRef.current) {
-        unsubFirestoreRef.current();
-        unsubFirestoreRef.current = null;
-      }
+      unsub();
+      unsubFirestoreRef.current = null;
     };
-  }, [router]);
+  }, [user, authLoading]);
 
-  if (!isClient || authLoading) {
+  // Auth確認中
+  if (authLoading) {
     return (
       <div className="flex-center" style={{ minHeight: '100vh' }}>
-        <div className="glass-card" style={{ textAlign: 'center' }}>
+        <div className="glass-card" style={{ textAlign: 'center', padding: '2rem' }}>
           <h1 className="text-gradient" style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
           <p className="text-secondary">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 未ログイン → ログインへリダイレクト（window.locationで確実に）
+  if (!user) {
+    if (typeof window !== 'undefined') {
+      window.location.replace("/login");
+    }
+    return (
+      <div className="flex-center" style={{ minHeight: '100vh' }}>
+        <div className="glass-card" style={{ textAlign: 'center', padding: '2rem' }}>
+          <p className="text-secondary">ログイン画面へ移動中...</p>
         </div>
       </div>
     );
@@ -83,23 +63,16 @@ export default function Home() {
   const handleApprove = async (taskId: string) => {
     try {
       await updateDoc(doc(db, "tasks", taskId), { status: "APPROVED" });
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   };
 
   const handleReject = async (taskId: string) => {
     try {
       await updateDoc(doc(db, "tasks", taskId), { status: "REJECTED" });
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   };
 
-  // F6修正: confirm() の代わりにカスタムUIを使う
-  const handleRollback = async () => {
-    setShowConfirm(true);
-  };
+  const handleRollback = () => setShowConfirm(true);
 
   const executeRollback = async () => {
     setShowConfirm(false);
@@ -109,14 +82,11 @@ export default function Home() {
         prompt: "【システムロールバック】直前の変更を取り消します。",
         model: "system-rollback",
         status: "QUEUED",
-        createdAt: new Date(),
+        createdAt: serverTimestamp(),
         summary: ""
       });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsRollingBack(false);
-    }
+    } catch (e) { console.error(e); }
+    finally { setIsRollingBack(false); }
   };
 
   const handleAnswerClarification = async (taskId: string, currentPrompt: string) => {
@@ -128,9 +98,7 @@ export default function Home() {
         prompt: currentPrompt + "\n\n【追加回答】\n" + answer,
         summary: "ユーザーが回答しました。再分析中..."
       });
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   };
 
   const handleFollowUp = async (taskId: string, originalPrompt: string, previousSummary: string) => {
@@ -146,38 +114,27 @@ export default function Home() {
       });
       setFollowUpTaskId(null);
       setFollowUpText("");
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   };
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "QUEUED":
-        return <span style={{ background: 'rgba(139, 92, 246, 0.2)', color: 'var(--primary)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>待機中</span>;
-      case "ANALYZING":
-        return <span style={{ background: 'rgba(245, 158, 11, 0.2)', color: 'var(--warning)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>計画作成中</span>;
-      case "WAITING_APPROVAL":
-        return <span style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#3b82f6', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>承認待ち</span>;
-      case "APPROVED":
-      case "IMPLEMENTING":
-        return <span style={{ background: 'rgba(16, 185, 129, 0.2)', color: 'var(--success)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>実装中</span>;
-      case "COMPLETED":
-        return <span style={{ background: 'rgba(255, 255, 255, 0.1)', color: 'var(--text-secondary)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>完了</span>;
-      case "REJECTED":
-        return <span style={{ background: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>却下済</span>;
-      case "FAILED":
-        return <span style={{ background: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>エラー</span>;
-      case "CLARIFICATION_NEEDED":
-        return <span style={{ background: 'rgba(234, 179, 8, 0.2)', color: '#eab308', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem', border: '1px solid #eab308' }}>質問があります</span>;
-      default:
-        return <span style={{ background: 'rgba(139, 92, 246, 0.2)', color: 'var(--primary)', padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem' }}>{status || "待機中"}</span>;
-    }
+    const styles: Record<string, { bg: string; color: string; label: string; border?: string }> = {
+      QUEUED: { bg: 'rgba(139, 92, 246, 0.2)', color: 'var(--primary)', label: '待機中' },
+      ANALYZING: { bg: 'rgba(245, 158, 11, 0.2)', color: 'var(--warning)', label: '計画作成中' },
+      WAITING_APPROVAL: { bg: 'rgba(59, 130, 246, 0.2)', color: '#3b82f6', label: '承認待ち' },
+      APPROVED: { bg: 'rgba(16, 185, 129, 0.2)', color: 'var(--success)', label: '実装中' },
+      IMPLEMENTING: { bg: 'rgba(16, 185, 129, 0.2)', color: 'var(--success)', label: '実装中' },
+      COMPLETED: { bg: 'rgba(255, 255, 255, 0.1)', color: 'var(--text-secondary)', label: '完了' },
+      REJECTED: { bg: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)', label: '却下済' },
+      FAILED: { bg: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)', label: 'エラー' },
+      CLARIFICATION_NEEDED: { bg: 'rgba(234, 179, 8, 0.2)', color: '#eab308', label: '質問があります', border: '1px solid #eab308' },
+    };
+    const s = styles[status] || { bg: 'rgba(139, 92, 246, 0.2)', color: 'var(--primary)', label: status || '待機中' };
+    return <span style={{ background: s.bg, color: s.color, padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem', border: s.border }}>{s.label}</span>;
   };
 
   return (
     <div className="container">
-      {/* F6: カスタム確認ダイアログ */}
       {showConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: '1rem' }}>
           <div className="glass-card" style={{ maxWidth: '360px', width: '100%', textAlign: 'center' }}>
@@ -191,25 +148,20 @@ export default function Home() {
       )}
 
       <header style={{ padding: '2rem 0', textAlign: 'center' }}>
-        <div>
-          <h1 className="text-gradient animate-fade-in" style={{ lineHeight: 1.1, marginBottom: '0.5rem' }}>ZENNOBATE DEV CORE</h1>
-          <p className="text-secondary animate-fade-in delay-100">自分専用のAI開発システム</p>
-          <p style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.25rem', fontFamily: 'monospace' }}>{debugInfo}</p>
-        </div>
-        <div className="animate-fade-in delay-200" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
+        <h1 className="text-gradient" style={{ lineHeight: 1.1, marginBottom: '0.5rem' }}>ZENNOBATE DEV CORE</h1>
+        <p className="text-secondary">自分専用のAI開発システム</p>
+        <p style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.25rem', fontFamily: 'monospace' }}>
+          ログイン済み: {user.email} | タスク: {tasks.length}件
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
           <Link href="/task/new" className="btn btn-primary" style={{ textDecoration: 'none', width: '100%', textAlign: 'center' }}>
             + 新しい指示を出す
           </Link>
           <Link href="/brainstorm" className="btn btn-outline" style={{ textDecoration: 'none', width: '100%', textAlign: 'center', borderColor: 'rgba(139, 92, 246, 0.4)', color: 'var(--primary)' }}>
             💬 壁打ちモード
           </Link>
-          {/* F8修正: signOut を await */}
-          <button 
-            className="btn btn-outline" 
-            style={{ width: '100%' }}
-            onClick={async () => {
-              try { await auth.signOut(); } finally { window.location.href = "/login"; }
-            }}
+          <button className="btn btn-outline" style={{ width: '100%' }}
+            onClick={() => { auth.signOut().then(() => window.location.replace("/login")); }}
           >
             ログアウト
           </button>
@@ -218,13 +170,11 @@ export default function Home() {
 
       <main>
         <section className="glass-panel" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
-          <div className="animate-fade-in delay-300" style={{ marginBottom: '1rem' }}>
+          <div style={{ marginBottom: '1rem' }}>
             <h2 style={{ fontSize: '1.2rem', marginBottom: '0.75rem' }}>タスク一覧 (依頼リスト)</h2>
-            <button 
-              className="btn btn-outline" 
+            <button className="btn btn-outline" 
               style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)', fontSize: '0.8rem', padding: '0.4rem 0.8rem', width: '100%' }}
-              onClick={handleRollback}
-              disabled={isRollingBack}
+              onClick={handleRollback} disabled={isRollingBack}
             >
               {isRollingBack ? '処理中...' : '↩️ 直前の変更を取り消す'}
             </button>
@@ -235,7 +185,7 @@ export default function Home() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
               {tasks.map((task) => (
-                <div key={task.id} className="glass-card animate-fade-in delay-300">
+                <div key={task.id} className="glass-card">
                   <div className="flex-between">
                     <div>
                       <span style={{ color: 'var(--primary)', fontWeight: 600 }}>T-{task.id.slice(0, 4).toUpperCase()}</span>
@@ -269,42 +219,28 @@ export default function Home() {
                     )}
 
                     {task.status === 'CLARIFICATION_NEEDED' && (
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button className="btn btn-primary" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleAnswerClarification(task.id, task.prompt)}>回答する</button>
-                      </div>
+                      <button className="btn btn-primary" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleAnswerClarification(task.id, task.prompt)}>回答する</button>
                     )}
 
                     {(task.status === 'COMPLETED' || task.status === 'FAILED') && followUpTaskId !== task.id && (
-                      <button 
-                        className="btn btn-outline" 
+                      <button className="btn btn-outline" 
                         style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem', borderColor: 'rgba(139, 92, 246, 0.4)', color: 'var(--primary)' }}
                         onClick={() => setFollowUpTaskId(task.id)}
-                      >
-                        → 続きを指示
-                      </button>
+                      >→ 続きを指示</button>
                     )}
                   </div>
 
                   {followUpTaskId === task.id && (
                     <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      <textarea
-                        className="input-glass"
-                        style={{ minHeight: '80px', resize: 'vertical', fontSize: '0.9rem' }}
+                      <textarea className="input-glass" style={{ minHeight: '80px', resize: 'vertical', fontSize: '0.9rem' }}
                         placeholder="続きの指示を入力...（例: 残りのUIも実装して、デザインは角丸で）"
-                        value={followUpText}
-                        onChange={(e) => setFollowUpText(e.target.value)}
-                        autoFocus
+                        value={followUpText} onChange={(e) => setFollowUpText(e.target.value)} autoFocus
                       />
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button className="btn btn-outline" style={{ flex: 1, fontSize: '0.8rem' }} onClick={() => { setFollowUpTaskId(null); setFollowUpText(""); }}>キャンセル</button>
-                        <button 
-                          className="btn btn-primary" 
-                          style={{ flex: 1, fontSize: '0.8rem' }} 
-                          onClick={() => handleFollowUp(task.id, task.prompt, task.summary)}
-                          disabled={!followUpText.trim()}
-                        >
-                          🚀 送信
-                        </button>
+                        <button className="btn btn-primary" style={{ flex: 1, fontSize: '0.8rem' }} 
+                          onClick={() => handleFollowUp(task.id, task.prompt, task.summary)} disabled={!followUpText.trim()}
+                        >🚀 送信</button>
                       </div>
                     </div>
                   )}

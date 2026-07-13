@@ -1,47 +1,41 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged } from "firebase/auth";
+import { useState } from "react";
+import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 
 export default function LoginPage() {
+  const { user, loading } = useAuth();
   const [error, setError] = useState<string | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
-  const [redirectChecked, setRedirectChecked] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
-  const router = useRouter();
 
-  useEffect(() => {
-    let cancelled = false;
+  // Auth確認中 or リダイレクト中
+  if (loading || isRedirecting) {
+    return (
+      <div className="flex-center" style={{ minHeight: '100vh' }}>
+        <div className="glass-card" style={{ width: '100%', maxWidth: '400px', textAlign: 'center' }}>
+          <h1 className="text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
+          <p className="text-secondary">{isRedirecting ? "ログイン中..." : "認証を確認中..."}</p>
+        </div>
+      </div>
+    );
+  }
 
-    // 1. Auth状態チェック
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (cancelled) return;
-      if (user) {
-        router.replace("/");
-        return;
-      }
-      setAuthChecked(true);
-    });
-
-    // 2. Redirect結果チェック（iOS Safari用）
-    getRedirectResult(auth).then((result) => {
-      if (cancelled) return;
-      if (result?.user) {
-        router.replace("/");
-      } else {
-        setRedirectChecked(true);
-      }
-    }).catch(() => {
-      if (!cancelled) setRedirectChecked(true);
-    });
-
-    return () => {
-      cancelled = true;
-      unsub();
-    };
-  }, [router]);
+  // すでにログイン済み → ホームへ
+  if (user) {
+    if (typeof window !== 'undefined') {
+      window.location.replace("/");
+    }
+    return (
+      <div className="flex-center" style={{ minHeight: '100vh' }}>
+        <div className="glass-card" style={{ width: '100%', maxWidth: '400px', textAlign: 'center' }}>
+          <h1 className="text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
+          <p className="text-secondary">ホーム画面へ移動中...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleGoogleLogin = async () => {
     setIsRedirecting(true);
@@ -52,10 +46,8 @@ export default function LoginPage() {
       if (isMobile) {
         await signInWithRedirect(auth, provider);
       } else {
-        const result = await signInWithPopup(auth, provider);
-        if (result.user) {
-          router.replace("/");
-        }
+        await signInWithPopup(auth, provider);
+        // ログイン成功 → AuthContextが自動的にuserを更新 → 上のif(user)でリダイレクト
       }
     } catch (err: any) {
       setIsRedirecting(false);
@@ -73,31 +65,13 @@ export default function LoginPage() {
     }
   };
 
-  // 両方のチェックが完了するまでローディング表示
-  const isReady = authChecked && redirectChecked && !isRedirecting;
-
-  if (!isReady) {
-    return (
-      <div className="flex-center" style={{ minHeight: '100vh' }}>
-        <div className="glass-card" style={{ width: '100%', maxWidth: '400px', textAlign: 'center' }}>
-          <h1 className="text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
-          <p className="text-secondary">{isRedirecting ? "ログイン中..." : "認証を確認中..."}</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex-center" style={{ minHeight: '100vh' }}>
       <div className="glass-card" style={{ width: '100%', maxWidth: '400px', textAlign: 'center' }}>
         <h1 className="text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
         <p className="text-secondary" style={{ marginBottom: '2rem' }}>Googleでログインして開始</p>
         
-        <button 
-          className="btn btn-primary" 
-          style={{ width: '100%' }}
-          onClick={handleGoogleLogin}
-        >
+        <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleGoogleLogin}>
           Googleアカウントでログイン
         </button>
 
