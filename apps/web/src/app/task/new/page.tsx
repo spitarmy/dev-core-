@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { useAuth } from "@/lib/auth-context";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 export default function NewTaskPage() {
+  const { user, loading: authLoading } = useAuth();
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("auto-multi-agent");
   const [image, setImage] = useState<File | null>(null);
@@ -15,15 +16,15 @@ export default function NewTaskPage() {
   const [submitProgress, setSubmitProgress] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const redirected = useRef(false);
   const router = useRouter();
 
-  // F3修正: 認証ガード
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (!user) router.push("/login");
-    });
-    return () => unsub();
-  }, [router]);
+    if (!authLoading && !user && !redirected.current) {
+      redirected.current = true;
+      router.replace("/login");
+    }
+  }, [authLoading, user, router]);
 
   const startListening = () => {
     if (typeof window === 'undefined') return;

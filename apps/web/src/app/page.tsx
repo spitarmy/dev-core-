@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
@@ -13,12 +14,20 @@ export default function Home() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [followUpTaskId, setFollowUpTaskId] = useState<string | null>(null);
   const [followUpText, setFollowUpText] = useState("");
-  const unsubFirestoreRef = useRef<(() => void) | null>(null);
+  const redirected = useRef(false);
+  const router = useRouter();
 
-  // Auth確定後にFirestoreリスナーをセットアップ
+  // 未ログイン時のリダイレクト（1回だけ）
   useEffect(() => {
-    if (authLoading) return;
-    if (!user) return; // ログインページへのリダイレクトはJSX側で処理
+    if (!authLoading && !user && !redirected.current) {
+      redirected.current = true;
+      router.replace("/login");
+    }
+  }, [authLoading, user, router]);
+
+  // Firestoreリスナー
+  useEffect(() => {
+    if (!user) return;
 
     const q = query(collection(db, "tasks"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snapshot) => {
@@ -26,111 +35,78 @@ export default function Home() {
     }, (error) => {
       console.error("Firestore error:", error);
     });
-    unsubFirestoreRef.current = unsub;
 
-    return () => {
-      unsub();
-      unsubFirestoreRef.current = null;
-    };
-  }, [user, authLoading]);
+    return () => unsub();
+  }, [user]);
 
-  // Auth確認中
-  if (authLoading) {
+  // ローディング or 未ログイン
+  if (authLoading || !user) {
     return (
       <div className="flex-center" style={{ minHeight: '100vh' }}>
         <div className="glass-card" style={{ textAlign: 'center', padding: '2rem' }}>
           <h1 className="text-gradient" style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
-          <p className="text-secondary">読み込み中...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // 未ログイン → ログインへリダイレクト（window.locationで確実に）
-  if (!user) {
-    if (typeof window !== 'undefined') {
-      window.location.replace("/login");
-    }
-    return (
-      <div className="flex-center" style={{ minHeight: '100vh' }}>
-        <div className="glass-card" style={{ textAlign: 'center', padding: '2rem' }}>
-          <p className="text-secondary">ログイン画面へ移動中...</p>
+          <p className="text-secondary">{authLoading ? '読み込み中...' : 'ログイン画面へ移動中...'}</p>
         </div>
       </div>
     );
   }
 
   const handleApprove = async (taskId: string) => {
-    try {
-      await updateDoc(doc(db, "tasks", taskId), { status: "APPROVED" });
-    } catch (e) { console.error(e); }
+    try { await updateDoc(doc(db, "tasks", taskId), { status: "APPROVED" }); } catch (e) { console.error(e); }
   };
-
   const handleReject = async (taskId: string) => {
-    try {
-      await updateDoc(doc(db, "tasks", taskId), { status: "REJECTED" });
-    } catch (e) { console.error(e); }
+    try { await updateDoc(doc(db, "tasks", taskId), { status: "REJECTED" }); } catch (e) { console.error(e); }
   };
-
   const handleRollback = () => setShowConfirm(true);
-
   const executeRollback = async () => {
     setShowConfirm(false);
     setIsRollingBack(true);
     try {
       await addDoc(collection(db, "tasks"), {
-        prompt: "【システムロールバック】直前の変更を取り消します。",
-        model: "system-rollback",
-        status: "QUEUED",
-        createdAt: serverTimestamp(),
-        summary: ""
+        prompt: "【システムロールバック】直前の変更を取り消します。", model: "system-rollback",
+        status: "QUEUED", createdAt: serverTimestamp(), summary: ""
       });
-    } catch (e) { console.error(e); }
-    finally { setIsRollingBack(false); }
+    } catch (e) { console.error(e); } finally { setIsRollingBack(false); }
   };
-
   const handleAnswerClarification = async (taskId: string, currentPrompt: string) => {
     const answer = window.prompt("AIからの質問に回答してください:");
     if (!answer) return;
     try {
-      await updateDoc(doc(db, "tasks", taskId), { 
-        status: "QUEUED",
-        prompt: currentPrompt + "\n\n【追加回答】\n" + answer,
+      await updateDoc(doc(db, "tasks", taskId), {
+        status: "QUEUED", prompt: currentPrompt + "\n\n【追加回答】\n" + answer,
         summary: "ユーザーが回答しました。再分析中..."
       });
     } catch (e) { console.error(e); }
   };
-
   const handleFollowUp = async (taskId: string, originalPrompt: string, previousSummary: string) => {
     if (!followUpText.trim()) return;
     try {
       await addDoc(collection(db, "tasks"), {
         prompt: `【前回の続き】\n前回の指示: ${originalPrompt}\n\n前回AIの報告:\n${previousSummary?.substring(0, 500) || ''}\n\n【追加の指示】\n${followUpText.trim()}`,
-        model: "auto-multi-agent",
-        status: "QUEUED",
-        createdAt: serverTimestamp(),
-        previousTaskId: taskId,
-        summary: ""
+        model: "auto-multi-agent", status: "QUEUED", createdAt: serverTimestamp(),
+        previousTaskId: taskId, summary: ""
       });
-      setFollowUpTaskId(null);
-      setFollowUpText("");
+      setFollowUpTaskId(null); setFollowUpText("");
     } catch (e) { console.error(e); }
   };
 
   const getStatusBadge = (status: string) => {
-    const styles: Record<string, { bg: string; color: string; label: string; border?: string }> = {
-      QUEUED: { bg: 'rgba(139, 92, 246, 0.2)', color: 'var(--primary)', label: '待機中' },
-      ANALYZING: { bg: 'rgba(245, 158, 11, 0.2)', color: 'var(--warning)', label: '計画作成中' },
-      WAITING_APPROVAL: { bg: 'rgba(59, 130, 246, 0.2)', color: '#3b82f6', label: '承認待ち' },
-      APPROVED: { bg: 'rgba(16, 185, 129, 0.2)', color: 'var(--success)', label: '実装中' },
-      IMPLEMENTING: { bg: 'rgba(16, 185, 129, 0.2)', color: 'var(--success)', label: '実装中' },
-      COMPLETED: { bg: 'rgba(255, 255, 255, 0.1)', color: 'var(--text-secondary)', label: '完了' },
-      REJECTED: { bg: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)', label: '却下済' },
-      FAILED: { bg: 'rgba(239, 68, 68, 0.2)', color: 'var(--danger)', label: 'エラー' },
-      CLARIFICATION_NEEDED: { bg: 'rgba(234, 179, 8, 0.2)', color: '#eab308', label: '質問があります', border: '1px solid #eab308' },
+    const map: Record<string, [string, string, string]> = {
+      QUEUED: ['rgba(139,92,246,0.2)', 'var(--primary)', '待機中'],
+      ANALYZING: ['rgba(245,158,11,0.2)', 'var(--warning)', '計画作成中'],
+      WAITING_APPROVAL: ['rgba(59,130,246,0.2)', '#3b82f6', '承認待ち'],
+      APPROVED: ['rgba(16,185,129,0.2)', 'var(--success)', '実装中'],
+      IMPLEMENTING: ['rgba(16,185,129,0.2)', 'var(--success)', '実装中'],
+      COMPLETED: ['rgba(255,255,255,0.1)', 'var(--text-secondary)', '完了'],
+      REJECTED: ['rgba(239,68,68,0.2)', 'var(--danger)', '却下済'],
+      FAILED: ['rgba(239,68,68,0.2)', 'var(--danger)', 'エラー'],
     };
-    const s = styles[status] || { bg: 'rgba(139, 92, 246, 0.2)', color: 'var(--primary)', label: status || '待機中' };
-    return <span style={{ background: s.bg, color: s.color, padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem', border: s.border }}>{s.label}</span>;
+    const [bg, color, label] = map[status] || ['rgba(139,92,246,0.2)', 'var(--primary)', status || '待機中'];
+    const extra = status === 'CLARIFICATION_NEEDED' ? { border: '1px solid #eab308' } : {};
+    const lbl = status === 'CLARIFICATION_NEEDED' ? '質問があります' : label;
+    const bg2 = status === 'CLARIFICATION_NEEDED' ? 'rgba(234,179,8,0.2)' : bg;
+    const c2 = status === 'CLARIFICATION_NEEDED' ? '#eab308' : color;
+    return <span style={{ background: bg2, color: c2, padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem', ...extra }}>{lbl}</span>;
   };
 
   return (
@@ -157,14 +133,12 @@ export default function Home() {
           <Link href="/task/new" className="btn btn-primary" style={{ textDecoration: 'none', width: '100%', textAlign: 'center' }}>
             + 新しい指示を出す
           </Link>
-          <Link href="/brainstorm" className="btn btn-outline" style={{ textDecoration: 'none', width: '100%', textAlign: 'center', borderColor: 'rgba(139, 92, 246, 0.4)', color: 'var(--primary)' }}>
+          <Link href="/brainstorm" className="btn btn-outline" style={{ textDecoration: 'none', width: '100%', textAlign: 'center', borderColor: 'rgba(139,92,246,0.4)', color: 'var(--primary)' }}>
             💬 壁打ちモード
           </Link>
           <button className="btn btn-outline" style={{ width: '100%' }}
-            onClick={() => { auth.signOut().then(() => window.location.replace("/login")); }}
-          >
-            ログアウト
-          </button>
+            onClick={() => auth.signOut().then(() => router.replace("/login"))}
+          >ログアウト</button>
         </div>
       </header>
 
@@ -172,14 +146,12 @@ export default function Home() {
         <section className="glass-panel" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
           <div style={{ marginBottom: '1rem' }}>
             <h2 style={{ fontSize: '1.2rem', marginBottom: '0.75rem' }}>タスク一覧 (依頼リスト)</h2>
-            <button className="btn btn-outline" 
-              style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)', fontSize: '0.8rem', padding: '0.4rem 0.8rem', width: '100%' }}
+            <button className="btn btn-outline"
+              style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)', fontSize: '0.8rem', padding: '0.4rem 0.8rem', width: '100%' }}
               onClick={handleRollback} disabled={isRollingBack}
-            >
-              {isRollingBack ? '処理中...' : '↩️ 直前の変更を取り消す'}
-            </button>
+            >{isRollingBack ? '処理中...' : '↩️ 直前の変更を取り消す'}</button>
           </div>
-          
+
           {tasks.length === 0 ? (
             <p className="text-secondary" style={{ marginTop: '1rem' }}>まだ依頼はありません。「新しい指示を出す」からAIに開発を依頼してみましょう。</p>
           ) : (
@@ -189,16 +161,12 @@ export default function Home() {
                   <div className="flex-between">
                     <div>
                       <span style={{ color: 'var(--primary)', fontWeight: 600 }}>T-{task.id.slice(0, 4).toUpperCase()}</span>
-                      {task.model && (
-                        <span className="text-secondary" style={{ marginLeft: '10px', fontSize: '0.75rem' }}>
-                          [{task.model.split('-')[0]}]
-                        </span>
-                      )}
+                      {task.model && <span className="text-secondary" style={{ marginLeft: '10px', fontSize: '0.75rem' }}>[{task.model.split('-')[0]}]</span>}
                     </div>
                     {getStatusBadge(task.status)}
                   </div>
                   <h3 style={{ margin: '1rem 0 0.5rem' }}>{task.prompt ? (task.prompt.length > 50 ? task.prompt.substring(0, 50) + '...' : task.prompt) : '無題のタスク'}</h3>
-                  
+
                   {task.summary && (
                     <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.9rem' }}>
                       <strong>AIからの報告:</strong>
@@ -210,21 +178,19 @@ export default function Home() {
                     <span className="text-secondary" style={{ fontSize: '0.875rem' }}>
                       {new Date(task.createdAt?.toDate ? task.createdAt.toDate() : Date.now()).toLocaleString('ja-JP')}
                     </span>
-                    
+
                     {task.status === 'WAITING_APPROVAL' && (
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button className="btn btn-outline" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleReject(task.id)}>却下</button>
                         <button className="btn btn-primary" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleApprove(task.id)}>計画を承認</button>
                       </div>
                     )}
-
                     {task.status === 'CLARIFICATION_NEEDED' && (
                       <button className="btn btn-primary" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleAnswerClarification(task.id, task.prompt)}>回答する</button>
                     )}
-
                     {(task.status === 'COMPLETED' || task.status === 'FAILED') && followUpTaskId !== task.id && (
-                      <button className="btn btn-outline" 
-                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem', borderColor: 'rgba(139, 92, 246, 0.4)', color: 'var(--primary)' }}
+                      <button className="btn btn-outline"
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem', borderColor: 'rgba(139,92,246,0.4)', color: 'var(--primary)' }}
                         onClick={() => setFollowUpTaskId(task.id)}
                       >→ 続きを指示</button>
                     )}
@@ -233,12 +199,10 @@ export default function Home() {
                   {followUpTaskId === task.id && (
                     <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       <textarea className="input-glass" style={{ minHeight: '80px', resize: 'vertical', fontSize: '0.9rem' }}
-                        placeholder="続きの指示を入力...（例: 残りのUIも実装して、デザインは角丸で）"
-                        value={followUpText} onChange={(e) => setFollowUpText(e.target.value)} autoFocus
-                      />
+                        placeholder="続きの指示を入力..." value={followUpText} onChange={(e) => setFollowUpText(e.target.value)} autoFocus />
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button className="btn btn-outline" style={{ flex: 1, fontSize: '0.8rem' }} onClick={() => { setFollowUpTaskId(null); setFollowUpText(""); }}>キャンセル</button>
-                        <button className="btn btn-primary" style={{ flex: 1, fontSize: '0.8rem' }} 
+                        <button className="btn btn-primary" style={{ flex: 1, fontSize: '0.8rem' }}
                           onClick={() => handleFollowUp(task.id, task.prompt, task.summary)} disabled={!followUpText.trim()}
                         >🚀 送信</button>
                       </div>

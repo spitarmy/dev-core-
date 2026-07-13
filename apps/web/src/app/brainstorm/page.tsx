@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
+import { useAuth } from "@/lib/auth-context";
 import {
   collection, doc, addDoc, updateDoc, onSnapshot,
   query, orderBy, serverTimestamp, Timestamp
@@ -16,6 +16,7 @@ type Message = {
 };
 
 export default function BrainstormPage() {
+  const { user, loading: authLoading } = useAuth();
   const [isClient, setIsClient] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -23,19 +24,22 @@ export default function BrainstormPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const redirected = useRef(false);
   const router = useRouter();
 
   useEffect(() => {
     setIsClient(true);
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (!user) {
-        router.push("/login");
-        return;
-      }
+  }, []);
+
+  useEffect(() => {
+    if (!authLoading && !user && !redirected.current) {
+      redirected.current = true;
+      router.replace("/login");
+    }
+    if (user) {
       setUserId(user.uid);
-    });
-    return () => unsub();
-  }, [router]);
+    }
+  }, [authLoading, user, router]);
 
   // セッションのリアルタイム監視
   useEffect(() => {

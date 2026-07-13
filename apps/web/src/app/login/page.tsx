@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider } from "firebase/auth";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { signInWithPopup, signInWithRedirect, GoogleAuthProvider } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 
@@ -9,33 +10,16 @@ export default function LoginPage() {
   const { user, loading } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
+  const redirected = useRef(false);
+  const router = useRouter();
 
-  // Auth確認中 or リダイレクト中
-  if (loading || isRedirecting) {
-    return (
-      <div className="flex-center" style={{ minHeight: '100vh' }}>
-        <div className="glass-card" style={{ width: '100%', maxWidth: '400px', textAlign: 'center' }}>
-          <h1 className="text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
-          <p className="text-secondary">{isRedirecting ? "ログイン中..." : "認証を確認中..."}</p>
-        </div>
-      </div>
-    );
-  }
-
-  // すでにログイン済み → ホームへ
-  if (user) {
-    if (typeof window !== 'undefined') {
-      window.location.replace("/");
+  // ログイン済みならホームへ（1回だけ）
+  useEffect(() => {
+    if (!loading && user && !redirected.current) {
+      redirected.current = true;
+      router.replace("/");
     }
-    return (
-      <div className="flex-center" style={{ minHeight: '100vh' }}>
-        <div className="glass-card" style={{ width: '100%', maxWidth: '400px', textAlign: 'center' }}>
-          <h1 className="text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
-          <p className="text-secondary">ホーム画面へ移動中...</p>
-        </div>
-      </div>
-    );
-  }
+  }, [loading, user, router]);
 
   const handleGoogleLogin = async () => {
     setIsRedirecting(true);
@@ -47,16 +31,13 @@ export default function LoginPage() {
         await signInWithRedirect(auth, provider);
       } else {
         await signInWithPopup(auth, provider);
-        // ログイン成功 → AuthContextが自動的にuserを更新 → 上のif(user)でリダイレクト
+        // AuthContextが自動更新 → useEffectでリダイレクト
       }
     } catch (err: any) {
       setIsRedirecting(false);
       if (err.code === "auth/popup-blocked") {
-        try {
-          await signInWithRedirect(auth, new GoogleAuthProvider());
-        } catch (e2) {
-          setError("ログインに失敗しました。もう一度お試しください。");
-        }
+        try { await signInWithRedirect(auth, new GoogleAuthProvider()); }
+        catch (e2) { setError("ログインに失敗しました。もう一度お試しください。"); }
       } else if (err.code === "auth/popup-closed-by-user") {
         setError("ログインがキャンセルされました。");
       } else {
@@ -64,6 +45,20 @@ export default function LoginPage() {
       }
     }
   };
+
+  // ローディング中 or リダイレクト中 or ログイン済み（遷移待ち）
+  if (loading || isRedirecting || user) {
+    return (
+      <div className="flex-center" style={{ minHeight: '100vh' }}>
+        <div className="glass-card" style={{ width: '100%', maxWidth: '400px', textAlign: 'center' }}>
+          <h1 className="text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
+          <p className="text-secondary">
+            {isRedirecting ? "ログイン中..." : user ? "ホーム画面へ移動中..." : "認証を確認中..."}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-center" style={{ minHeight: '100vh' }}>
