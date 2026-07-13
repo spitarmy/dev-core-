@@ -466,7 +466,9 @@ async function startWorker() {
     // Firestoreのstream初期化競合を防ぐため遅延起動
     const startBrainstormListener = () => {
     const brainstormQuery = db.collection('brainstorms').where('status', '==', 'thinking');
+    console.log('💬 Brainstorm listener starting...');
     brainstormQuery.onSnapshot(async (snapshot: any) => {
+      console.log(`💬 Brainstorm snapshot received: ${snapshot.docChanges().length} changes`);
       for (const change of snapshot.docChanges()) {
         if (change.type === 'added' || change.type === 'modified') {
           const data = change.doc.data();
@@ -497,7 +499,8 @@ async function startWorker() {
               messages: claudeMessages
             });
 
-            const aiText = response.content[0]?.type === 'text' ? response.content[0].text : '考え中...';
+            const textBlock = response.content.find((b: any) => b.type === 'text');
+            const aiText = textBlock ? (textBlock as any).text : '考え中...';
 
             // AI応答をメッセージ配列に追加してFirestoreに書き戻す
             const updatedMessages = [...messages, { role: 'ai', text: aiText }];
