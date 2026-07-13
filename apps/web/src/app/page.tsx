@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
 
 export default function Home() {
   const [isClient, setIsClient] = useState(false);
@@ -13,8 +13,10 @@ export default function Home() {
   const [isRollingBack, setIsRollingBack] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>("読み込み中...");
   const [authUser, setAuthUser] = useState<any>(null);
-  const [showConfirm, setShowConfirm] = useState(false); // F6: カスタムconfirm
-  const unsubFirestoreRef = useRef<(() => void) | null>(null); // F1: リスナー管理
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [followUpTaskId, setFollowUpTaskId] = useState<string | null>(null);
+  const [followUpText, setFollowUpText] = useState("");
+  const unsubFirestoreRef = useRef<(() => void) | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -115,6 +117,24 @@ export default function Home() {
         prompt: currentPrompt + "\n\n【追加回答】\n" + answer,
         summary: "ユーザーが回答しました。再分析中..."
       });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleFollowUp = async (taskId: string, originalPrompt: string, previousSummary: string) => {
+    if (!followUpText.trim()) return;
+    try {
+      await addDoc(collection(db, "tasks"), {
+        prompt: `【前回の続き】\n前回の指示: ${originalPrompt}\n\n前回AIの報告:\n${previousSummary?.substring(0, 500) || ''}\n\n【追加の指示】\n${followUpText.trim()}`,
+        model: "auto-multi-agent",
+        status: "QUEUED",
+        createdAt: serverTimestamp(),
+        previousTaskId: taskId,
+        summary: ""
+      });
+      setFollowUpTaskId(null);
+      setFollowUpText("");
     } catch (e) {
       console.error(e);
     }
@@ -242,7 +262,41 @@ export default function Home() {
                         <button className="btn btn-primary" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleAnswerClarification(task.id, task.prompt)}>回答する</button>
                       </div>
                     )}
+
+                    {(task.status === 'COMPLETED' || task.status === 'FAILED') && followUpTaskId !== task.id && (
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem', borderColor: 'rgba(139, 92, 246, 0.4)', color: 'var(--primary)' }}
+                        onClick={() => setFollowUpTaskId(task.id)}
+                      >
+                        → 続きを指示
+                      </button>
+                    )}
                   </div>
+
+                  {followUpTaskId === task.id && (
+                    <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <textarea
+                        className="input-glass"
+                        style={{ minHeight: '80px', resize: 'vertical', fontSize: '0.9rem' }}
+                        placeholder="続きの指示を入力...（例: 残りのUIも実装して、デザインは角丸で）"
+                        value={followUpText}
+                        onChange={(e) => setFollowUpText(e.target.value)}
+                        autoFocus
+                      />
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-outline" style={{ flex: 1, fontSize: '0.8rem' }} onClick={() => { setFollowUpTaskId(null); setFollowUpText(""); }}>キャンセル</button>
+                        <button 
+                          className="btn btn-primary" 
+                          style={{ flex: 1, fontSize: '0.8rem' }} 
+                          onClick={() => handleFollowUp(task.id, task.prompt, task.summary)}
+                          disabled={!followUpText.trim()}
+                        >
+                          🚀 送信
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

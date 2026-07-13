@@ -477,8 +477,6 @@ async function startWorker() {
               updatedAt: admin.firestore.FieldValue.serverTimestamp()
             });
           } catch (_) {}
-        } finally {
-          processingTasks.delete(change.doc.id);
         }
       }
     }, (error: any) => {
