@@ -72,7 +72,7 @@ export default function Home() {
   if (!isClient || authLoading) {
     return (
       <div className="flex-center" style={{ minHeight: '100vh' }}>
-        <div className="glass-card animate-fade-in" style={{ textAlign: 'center' }}>
+        <div className="glass-card" style={{ textAlign: 'center' }}>
           <h1 className="text-gradient" style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
           <p className="text-secondary">読み込み中...</p>
         </div>
