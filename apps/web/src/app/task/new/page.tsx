@@ -22,7 +22,7 @@ export default function NewTaskPage() {
   useEffect(() => {
     if (!authLoading && !user && !redirected.current) {
       redirected.current = true;
-      router.replace("/login");
+      router.replace("/");
     }
   }, [authLoading, user, router]);
 

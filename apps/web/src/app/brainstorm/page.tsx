@@ -34,7 +34,7 @@ export default function BrainstormPage() {
   useEffect(() => {
     if (!authLoading && !user && !redirected.current) {
       redirected.current = true;
-      router.replace("/login");
+      router.replace("/");
     }
     if (user) {
       setUserId(user.uid);

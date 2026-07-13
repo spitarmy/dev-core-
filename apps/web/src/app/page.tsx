@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { signInWithPopup, signInWithRedirect, GoogleAuthProvider } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
@@ -14,43 +14,75 @@ export default function Home() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [followUpTaskId, setFollowUpTaskId] = useState<string | null>(null);
   const [followUpText, setFollowUpText] = useState("");
-  const redirected = useRef(false);
-  const router = useRouter();
-
-  // 未ログイン時のリダイレクト（1回だけ）
-  useEffect(() => {
-    if (!authLoading && !user && !redirected.current) {
-      redirected.current = true;
-      router.replace("/login");
-    }
-  }, [authLoading, user, router]);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
 
   // Firestoreリスナー
   useEffect(() => {
     if (!user) return;
-
     const q = query(collection(db, "tasks"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snapshot) => {
       setTasks(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (error) => {
-      console.error("Firestore error:", error);
-    });
-
+    }, (error) => console.error("Firestore error:", error));
     return () => unsub();
   }, [user]);
 
-  // ローディング or 未ログイン
-  if (authLoading || !user) {
+  // ===== ログイン処理 =====
+  const handleGoogleLogin = async () => {
+    setLoggingIn(true);
+    setLoginError(null);
+    try {
+      const provider = new GoogleAuthProvider();
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile) {
+        await signInWithRedirect(auth, provider);
+      } else {
+        await signInWithPopup(auth, provider);
+      }
+    } catch (err: any) {
+      setLoggingIn(false);
+      if (err.code === "auth/popup-blocked") {
+        try { await signInWithRedirect(auth, new GoogleAuthProvider()); }
+        catch { setLoginError("ログインに失敗しました。"); }
+      } else if (err.code === "auth/popup-closed-by-user") {
+        setLoginError("ログインがキャンセルされました。");
+      } else {
+        setLoginError(err.message || "ログインに失敗しました");
+      }
+    }
+  };
+
+  // ===== ローディング画面 =====
+  if (authLoading || loggingIn) {
     return (
       <div className="flex-center" style={{ minHeight: '100vh' }}>
         <div className="glass-card" style={{ textAlign: 'center', padding: '2rem' }}>
-          <h1 className="text-gradient" style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
-          <p className="text-secondary">{authLoading ? '読み込み中...' : 'ログイン画面へ移動中...'}</p>
+          <h1 className="text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
+          <p className="text-secondary">{loggingIn ? 'ログイン中...' : '読み込み中...'}</p>
         </div>
       </div>
     );
   }
 
+  // ===== 未ログイン → ログインボタン（リダイレクトなし！） =====
+  if (!user) {
+    return (
+      <div className="flex-center" style={{ minHeight: '100vh' }}>
+        <div className="glass-card" style={{ width: '100%', maxWidth: '400px', textAlign: 'center' }}>
+          <h1 className="text-gradient" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
+          <p className="text-secondary" style={{ marginBottom: '2rem' }}>Googleでログインして開始</p>
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleGoogleLogin}>
+            Googleアカウントでログイン
+          </button>
+          {loginError && (
+            <p style={{ color: 'var(--danger)', marginTop: '1rem', fontSize: '0.875rem' }}>{loginError}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ===== ダッシュボード（ログイン済み） =====
   const handleApprove = async (taskId: string) => {
     try { await updateDoc(doc(db, "tasks", taskId), { status: "APPROVED" }); } catch (e) { console.error(e); }
   };
@@ -59,8 +91,7 @@ export default function Home() {
   };
   const handleRollback = () => setShowConfirm(true);
   const executeRollback = async () => {
-    setShowConfirm(false);
-    setIsRollingBack(true);
+    setShowConfirm(false); setIsRollingBack(true);
     try {
       await addDoc(collection(db, "tasks"), {
         prompt: "【システムロールバック】直前の変更を取り消します。", model: "system-rollback",
@@ -89,7 +120,6 @@ export default function Home() {
       setFollowUpTaskId(null); setFollowUpText("");
     } catch (e) { console.error(e); }
   };
-
   const getStatusBadge = (status: string) => {
     const map: Record<string, [string, string, string]> = {
       QUEUED: ['rgba(139,92,246,0.2)', 'var(--primary)', '待機中'],
@@ -100,13 +130,11 @@ export default function Home() {
       COMPLETED: ['rgba(255,255,255,0.1)', 'var(--text-secondary)', '完了'],
       REJECTED: ['rgba(239,68,68,0.2)', 'var(--danger)', '却下済'],
       FAILED: ['rgba(239,68,68,0.2)', 'var(--danger)', 'エラー'],
+      CLARIFICATION_NEEDED: ['rgba(234,179,8,0.2)', '#eab308', '質問があります'],
     };
     const [bg, color, label] = map[status] || ['rgba(139,92,246,0.2)', 'var(--primary)', status || '待機中'];
-    const extra = status === 'CLARIFICATION_NEEDED' ? { border: '1px solid #eab308' } : {};
-    const lbl = status === 'CLARIFICATION_NEEDED' ? '質問があります' : label;
-    const bg2 = status === 'CLARIFICATION_NEEDED' ? 'rgba(234,179,8,0.2)' : bg;
-    const c2 = status === 'CLARIFICATION_NEEDED' ? '#eab308' : color;
-    return <span style={{ background: bg2, color: c2, padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem', ...extra }}>{lbl}</span>;
+    return <span style={{ background: bg, color, padding: '4px 12px', borderRadius: '12px', fontSize: '0.875rem',
+      ...(status === 'CLARIFICATION_NEEDED' ? { border: '1px solid #eab308' } : {}) }}>{label}</span>;
   };
 
   return (
@@ -127,7 +155,7 @@ export default function Home() {
         <h1 className="text-gradient" style={{ lineHeight: 1.1, marginBottom: '0.5rem' }}>ZENNOBATE DEV CORE</h1>
         <p className="text-secondary">自分専用のAI開発システム</p>
         <p style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: '0.25rem', fontFamily: 'monospace' }}>
-          ログイン済み: {user.email} | タスク: {tasks.length}件
+          {user.email} | タスク: {tasks.length}件
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
           <Link href="/task/new" className="btn btn-primary" style={{ textDecoration: 'none', width: '100%', textAlign: 'center' }}>
@@ -136,8 +164,8 @@ export default function Home() {
           <Link href="/brainstorm" className="btn btn-outline" style={{ textDecoration: 'none', width: '100%', textAlign: 'center', borderColor: 'rgba(139,92,246,0.4)', color: 'var(--primary)' }}>
             💬 壁打ちモード
           </Link>
-          <button className="btn btn-outline" style={{ width: '100%' }}
-            onClick={() => auth.signOut().then(() => router.replace("/login"))}
+          <button className="btn btn-outline" style={{ width: '100%', fontSize: '0.85rem', opacity: 0.6 }}
+            onClick={() => auth.signOut()}
           >ログアウト</button>
         </div>
       </header>
@@ -178,7 +206,6 @@ export default function Home() {
                     <span className="text-secondary" style={{ fontSize: '0.875rem' }}>
                       {new Date(task.createdAt?.toDate ? task.createdAt.toDate() : Date.now()).toLocaleString('ja-JP')}
                     </span>
-
                     {task.status === 'WAITING_APPROVAL' && (
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button className="btn btn-outline" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleReject(task.id)}>却下</button>
