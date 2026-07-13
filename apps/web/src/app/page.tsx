@@ -16,13 +16,13 @@ export default function Home() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [followUpTaskId, setFollowUpTaskId] = useState<string | null>(null);
   const [followUpText, setFollowUpText] = useState("");
+  const [authLoading, setAuthLoading] = useState(true);
   const unsubFirestoreRef = useRef<(() => void) | null>(null);
   const router = useRouter();
 
   useEffect(() => {
     setIsClient(true);
 
-    // F1修正: リスナーを適切にクリーンアップ
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       // 前のFirestoreリスナーをクリーンアップ
       if (unsubFirestoreRef.current) {
@@ -30,9 +30,11 @@ export default function Home() {
         unsubFirestoreRef.current = null;
       }
 
+      setAuthLoading(false);
+
       if (!user) {
         setDebugInfo("未ログイン。ログイン画面へ移動します...");
-        router.push("/login");
+        router.replace("/login");
         return;
       }
       setAuthUser(user);
@@ -67,7 +69,16 @@ export default function Home() {
     };
   }, [router]);
 
-  if (!isClient) return null;
+  if (!isClient || authLoading) {
+    return (
+      <div className="flex-center" style={{ minHeight: '100vh' }}>
+        <div className="glass-card animate-fade-in" style={{ textAlign: 'center' }}>
+          <h1 className="text-gradient" style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>ZENNOBATE</h1>
+          <p className="text-secondary">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleApprove = async (taskId: string) => {
     try {
