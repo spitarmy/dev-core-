@@ -456,14 +456,14 @@ async function startWorker() {
       }
     }, (error: any) => {
       console.error('Error listening to tasks:', error);
-      // W5修正: エラー時に再接続
-      console.log('🔄 Reconnecting task listener in 5 seconds...');
-      setTimeout(startTaskListener, 5000);
+      console.error('Task listener died. Restarting process...');
+      process.exit(1);
     });
   };
   startTaskListener();
 
     // === 壁打ちモード: brainstormsコレクションの監視 ===
+    // Firestoreのstream初期化競合を防ぐため遅延起動
     const startBrainstormListener = () => {
     const brainstormQuery = db.collection('brainstorms').where('status', '==', 'thinking');
     brainstormQuery.onSnapshot(async (snapshot: any) => {
@@ -515,11 +515,11 @@ async function startWorker() {
       }
     }, (error: any) => {
       console.error('Error listening to brainstorms:', error);
-      console.log('🔄 Reconnecting brainstorm listener in 5 seconds...');
-      setTimeout(startBrainstormListener, 5000);
+      console.error('Brainstorm listener died. Restarting process...');
+      process.exit(1);
     });
   };
-  startBrainstormListener();
+  setTimeout(() => startBrainstormListener(), 3000);
 }
 
 startWorker().catch(console.error);
