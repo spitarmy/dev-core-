@@ -7,6 +7,23 @@ import { auth, db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp } from "firebase/firestore";
 
+function TerminalLog({ logs }: { logs: string[] }) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
+  return (
+    <div style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px', marginBottom: '1rem', fontFamily: 'monospace', fontSize: '0.85rem', color: '#10b981', maxHeight: '250px', overflowY: 'auto', border: '1px solid rgba(16, 185, 129, 0.3)', boxShadow: 'inset 0 0 10px rgba(0,0,0,0.5)' }}>
+      {logs.map((log, i) => (
+        <div key={i} style={{ marginBottom: '0.25rem' }}>$ {log}</div>
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
+
 export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const [tasks, setTasks] = useState<any[]>([]);
@@ -200,6 +217,10 @@ export default function Home() {
                       <strong>AIからの報告:</strong>
                       <p style={{ marginTop: '0.5rem', whiteSpace: 'pre-wrap' }}>{task.summary}</p>
                     </div>
+                  )}
+
+                  {(task.status === 'ANALYZING' || task.status === 'IMPLEMENTING') && task.liveLogs && task.liveLogs.length > 0 && (
+                    <TerminalLog logs={task.liveLogs} />
                   )}
 
                   <div className="flex-between">

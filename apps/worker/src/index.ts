@@ -30,12 +30,39 @@ try {
 
 const db = admin.firestore();
 
+// 💡 リアルタイムログストリーミング用バッチ処理
+const logQueues: Record<string, string[]> = {};
+const logTimers: Record<string, NodeJS.Timeout> = {};
+
+function logToTask(taskId: string, message: string) {
+  console.log(`[T-${taskId.substring(0, 4).toUpperCase()}] ${message}`);
+  if (!logQueues[taskId]) logQueues[taskId] = [];
+  logQueues[taskId].push(message);
+
+  if (!logTimers[taskId]) {
+    logTimers[taskId] = setTimeout(async () => {
+      const messages = logQueues[taskId];
+      delete logQueues[taskId];
+      delete logTimers[taskId];
+      if (messages && messages.length > 0) {
+        try {
+          await db.collection('tasks').doc(taskId).update({
+            liveLogs: admin.firestore.FieldValue.arrayUnion(...messages)
+          });
+        } catch (e) {
+          console.error("Failed to push logs:", e);
+        }
+      }
+    }, 1500); // 1.5秒に1回まとめてFirestoreへ書き込む
+  }
+}
+
 // 🚀 3社すべての最強AIをセットアップ！
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-async function generatePlan(prompt: string, model: string, imageBase64?: string, memoryText?: string): Promise<string> {
+async function generatePlan(taskId: string, prompt: string, model: string, imageBase64?: string, memoryText?: string): Promise<string> {
   const isAuto = model === 'auto-multi-agent';
   const systemInstruction = isAuto 
       ? `あなたは優秀なAIマネージャーです。以下のユーザーからの指示を読み、実装計画を作成してください。
@@ -100,10 +127,10 @@ async function generatePlan(prompt: string, model: string, imageBase64?: string,
   }
 }
 
-async function executeTask(prompt: string, model: string, imageBase64?: string, plan?: string, memoryText?: string): Promise<string> {
+async function executeTask(taskId: string, prompt: string, model: string, imageBase64?: string, plan?: string, memoryText?: string): Promise<string> {
   try {
     if (model === 'auto-multi-agent') {
-      console.log('🤖 [MULTI-AGENT] Starting Auto-Routing Swarm Workflow...');
+      logToTask(taskId, '🤖 [MULTI-AGENT] Starting Auto-Routing Swarm Workflow...');
       
       // チーム編成表の抽出
       let swarmPlan: any[] = [];
@@ -118,7 +145,7 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
         swarmPlan = [{ role: "Fullstack Engineer", system: "あなたはフルスタックエンジニアです。要件をすべて実装してください。", task: prompt }];
       }
 
-      console.log(`🤖 [MULTI-AGENT] Swarm Team formed with ${swarmPlan.length} agents.`);
+      logToTask(taskId, `🤖 [MULTI-AGENT] Swarm Team formed with ${swarmPlan.length} agents.`);
       
       const memoryFiles: Record<string, string> = {};
       let totalFilesUpdated = 0;
@@ -126,7 +153,7 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
 
       // 各エージェントを順番に呼び出す (Swarm)
       for (const agent of swarmPlan) {
-        console.log(`🤖 [MULTI-AGENT] Delegating to: ${agent.role}...`);
+        logToTask(taskId, `🤖 [MULTI-AGENT] Delegating to: ${agent.role}...`);
         
         let previousContext = "";
         if (Object.keys(memoryFiles).length > 0) {
@@ -183,7 +210,7 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
           fs.mkdirSync(path.dirname(fullPath), { recursive: true });
           fs.writeFileSync(fullPath, content, 'utf8');
           totalFilesUpdated++;
-          console.log(`🤖 [MULTI-AGENT] Wrote file: ${file}`);
+          logToTask(taskId, `🤖 [MULTI-AGENT] Wrote file: ${file}`);
         }
 
         if (totalFilesUpdated > 0 && process.env.GITHUB_TOKEN) {
@@ -195,14 +222,14 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
           execSync(`git commit -m "feat: AI Agent Swarm automated implementation"`);
           execSync(`git push origin main`);
           pushSuccess = true;
-          console.log(`🤖 [MULTI-AGENT] Successfully pushed to GitHub!`);
+          logToTask(taskId, `🤖 [MULTI-AGENT] Successfully pushed to GitHub!`);
         }
       } catch (err) {
         console.error("Git push error:", err);
       }
 
       // Step 2: Manager reviews (Gemini with Claude fallback)
-      console.log('🤖 [MULTI-AGENT] Manager is reviewing work...');
+      logToTask(taskId, '🤖 [MULTI-AGENT] Manager is reviewing work...');
       let reviewText = '完了';
       try {
         const response = await ai.models.generateContent({
@@ -228,7 +255,7 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
       }
 
       // Step 3: Update Memory (best-effort)
-      console.log('🤖 [MULTI-AGENT] Updating Project Memory...');
+      logToTask(taskId, '🤖 [MULTI-AGENT] Updating Project Memory...');
       try {
         const memoryUpdateRes = await ai.models.generateContent({
           model: 'gemini-2.0-flash',
@@ -237,7 +264,7 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
         });
         const newMemory = memoryUpdateRes.text || memoryText || '';
         await db.collection('projectInfo').doc('memory').set({ content: newMemory, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-        console.log('🤖 [MULTI-AGENT] Memory updated successfully.');
+        logToTask(taskId, '🤖 [MULTI-AGENT] Memory updated successfully.');
       } catch(e) {
         console.error("Failed to update memory (non-critical)", e);
       }
@@ -245,7 +272,7 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
       return reviewText;
 
     } else if (model === 'system-rollback') {
-      console.log('🤖 [ROLLBACK] Executing system rollback...');
+      logToTask(taskId, '🤖 [ROLLBACK] Executing system rollback...');
       try {
         if (process.env.GITHUB_TOKEN) {
           execSync(`git config --global user.name "Zennobate AI Worker"`);
@@ -254,7 +281,7 @@ async function executeTask(prompt: string, model: string, imageBase64?: string, 
           // Revert the last commit safely
           execSync(`git revert --no-edit HEAD`);
           execSync(`git push origin main`);
-          console.log(`🤖 [ROLLBACK] Successfully reverted and pushed to GitHub!`);
+          logToTask(taskId, `🤖 [ROLLBACK] Successfully reverted and pushed to GitHub!`);
           return "【ロールバック完了】\n直前の変更を無事に無かったことにし、安全な状態をGitHubへPushしました。";
         } else {
           return "エラー: GITHUB_TOKENが設定されていないためロールバックできません。";
@@ -389,7 +416,7 @@ async function startWorker() {
               }
             }
 
-            const plan = await generatePlan(taskData.prompt, taskData.model, imageBase64, memoryText);
+            const plan = await generatePlan(taskId, taskData.prompt, taskData.model, imageBase64, memoryText);
 
             // 逆質問の確認
             try {
@@ -458,7 +485,7 @@ async function startWorker() {
 
             // 以前の計画（リサーチ結果）を取得してClaudeに渡す
             const planText = taskData.summary || '';
-            const result = await executeTask(taskData.prompt, taskData.model, imageBase64, planText, memoryText);
+            const result = await executeTask(taskId, taskData.prompt, taskData.model, imageBase64, planText, memoryText);
 
             await change.doc.ref.update({
               status: 'COMPLETED',
