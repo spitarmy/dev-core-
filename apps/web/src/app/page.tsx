@@ -181,6 +181,9 @@ export default function Home() {
           <Link href="/brainstorm" className="btn btn-outline" style={{ textDecoration: 'none', width: '100%', textAlign: 'center', borderColor: 'rgba(139,92,246,0.4)', color: 'var(--primary)' }}>
             💬 壁打ちモード
           </Link>
+          <Link href="/memory" className="btn btn-outline" style={{ textDecoration: 'none', width: '100%', textAlign: 'center', borderColor: 'rgba(16,185,129,0.4)', color: 'var(--success)' }}>
+            🧠 プロジェクト記憶の管理
+          </Link>
           <button className="btn btn-outline" style={{ width: '100%', fontSize: '0.85rem', opacity: 0.6 }}
             onClick={() => auth.signOut()}
           >ログアウト</button>
