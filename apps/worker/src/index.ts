@@ -481,8 +481,8 @@ async function startWorker() {
       }
     }, (error: any) => {
       console.error('Error listening to tasks:', error);
-      console.error('Task listener died. Restarting process...');
-      process.exit(1);
+      console.log('Restarting task listener in 5 seconds...');
+      setTimeout(startTaskListener, 5000);
     });
   };
   startTaskListener();
@@ -543,8 +543,8 @@ async function startWorker() {
       }
     }, (error: any) => {
       console.error('Error listening to brainstorms:', error);
-      console.error('Brainstorm listener died. Restarting process...');
-      process.exit(1);
+      console.log('Restarting brainstorm listener in 5 seconds...');
+      setTimeout(startBrainstormListener, 5000);
     });
   };
   setTimeout(() => startBrainstormListener(), 3000);
